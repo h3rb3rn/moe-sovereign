@@ -526,9 +526,36 @@ def _anthropic_to_openai_messages(messages: list, system: Optional[str]) -> list
             )
         if system:
             result.append({"role": "system", "content": system})
+
+    def _merge_system(text: str) -> None:
+        """Merge extra system-role content into the single leading system
+        message instead of appending a second one. Claude Code's own
+        `messages` array can itself carry a mid-conversation entry with
+        role "system" (e.g. a system-reminder) alongside the top-level
+        `system` field — forwarding it as a second role:system message
+        causes providers that validate for exactly one system entry at
+        position 0 (observed: Hetzner) to reject the request with HTTP 400
+        ("System message must be at the beginning")."""
+        if not text:
+            return
+        if result and result[0].get("role") == "system":
+            result[0] = {**result[0], "content": (result[0].get("content") or "") + "\n\n" + text}
+        else:
+            result.insert(0, {"role": "system", "content": text})
+
     for msg in messages:
         role    = msg.get("role", "user")
         content = msg.get("content", "")
+        if role == "system":
+            if isinstance(content, list):
+                content = "\n".join(
+                    b.get("text", "") for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+            elif not isinstance(content, str):
+                content = str(content) if content else ""
+            _merge_system(content)
+            continue
         if isinstance(content, str):
             result.append({"role": role, "content": content})
             continue

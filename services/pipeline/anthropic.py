@@ -151,9 +151,19 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 def _trim_oai_to_budget_impl(oai_msgs: list, available_input_tokens: int) -> tuple:
     """Remove oldest non-system message groups until history fits the token budget.
 
-    Groups are defined by: one non-tool message + all immediately following tool messages.
-    This preserves tool_call/tool_result integrity — they are dropped as atomic pairs.
-    The last group (current user turn) is never dropped.
+    Groups are defined by: one user turn + every assistant/tool message up to
+    (not including) the next user message. This keeps a whole tool-calling
+    round-trip (assistant tool_call + its tool result, possibly repeated)
+    bundled atomically with the user message that triggered it — dropping a
+    group can never strand a message set with no user turn in it. Providers
+    that validate for at least one user-role message (observed: Hetzner's
+    inference API, "No user query found in messages") reject a payload where
+    that guarantee doesn't hold; grouping by assistant messages too (the
+    previous behavior) could leave the trailing group as pure
+    assistant-tool_call/tool-result with no user message once trimmed down to
+    a single group.
+    The last group (current user turn, with its full tool-call chain) is
+    never dropped.
 
     Returns (kept_messages, dropped_flag, dropped_groups) where dropped_groups is
     the list of message-groups removed, oldest first.
@@ -168,12 +178,14 @@ def _trim_oai_to_budget_impl(oai_msgs: list, available_input_tokens: int) -> tup
     if len(conv_msgs) <= 1:
         return oai_msgs, False, []
 
-    # Build groups: each starts with a non-tool message, collects trailing tool messages
+    # Build groups: each starts at a user message (or at the very first
+    # message, whatever its role, so nothing is ever silently dropped) and
+    # collects every following assistant/tool message up to the next user one.
     groups: list = []
     for msg in conv_msgs:
-        if msg.get("role") != "tool":
+        if msg.get("role") == "user" or not groups:
             groups.append([msg])
-        elif groups:
+        else:
             groups[-1].append(msg)
     if len(groups) <= 1:
         return oai_msgs, False, []
@@ -783,39 +795,26 @@ async def _anthropic_tool_handler(
     # Use the system token for model-info lookup: user tokens often lack /v1/models access
     # on LiteLLM-backed providers (e.g. AIHUB returns 401 for user keys on that endpoint).
     _info_token = TOKEN_MAP.get(effective_node, "") or effective_token
+    # An explicit context_window is a real override, not merely a fallback for
+    # total detection failure: it wins even when live auto-detection
+    # "succeeds" with a different value — including a wrong one (e.g. a
+    # provider's static parameter-count heuristic guessing low because its
+    # /v1/models/{id} 404s and only the plain /v1/models list exists).
+    # Priority: profile.context_window (explicit per-profile override) >
+    # session.template_num_ctx (template's declared context_window) > live
+    # auto-detect. Without this, an admin's explicit value could be silently
+    # ignored whenever detection returned *something*, however wrong.
+    _ctx_override = session.context_window or session.template_num_ctx or 0
     _tool_ctx = await _get_tool_ctx_async(
-        effective_model, effective_url, _info_token, state.redis_client
+        effective_model, effective_url, _info_token, state.redis_client,
+        override=_ctx_override,
     )
-    # P0 fix: when context-window resolution returns 0 (API timeout, 401 from
-    # cloud endpoint, Redis miss), fall back through three escalating sources so
-    # the budget system never collapses to a stale TOOL_MAX_TOKENS*4 heuristic:
-    #   1. profile.context_window  (explicit per-profile override)
-    #   2. session.template_num_ctx (template's judge_num_ctx / expert context_window)
-    #   3. static heuristic        (get_model_context_window — param-count based)
-    #   4. TOOL_MAX_TOKENS*4       (last resort — typically 32768)
-    # Without level 2, cloud models like claude-sonnet-4-6 routed via AIHUB
-    # (which returns 401 on GET /v1/models/{id}) collapse to 32768 even though the
-    # template correctly declares 204800 — causing spurious PRE-FLIGHT overflow and
-    # full history trim that resets the conversation.
-    _ctx_profile   = session.context_window if session.context_window else 0
-    _ctx_template  = session.template_num_ctx if session.template_num_ctx else 0
-    _ctx_static    = _get_static_ctx_window(effective_model)
+    # Last-resort fallback: no override configured AND auto-detection returned
+    # nothing at all (API timeout, 401, cache miss, and even the static
+    # parameter-count heuristic couldn't parse this model's name).
     if _tool_ctx == 0:
-        if _ctx_profile > 0:
-            logger.warning(
-                "cc_tool: context_window lookup returned 0 — "
-                "falling back to profile context_window=%d "
-                "(model=%s url=%s)", _ctx_profile, effective_model, effective_url,
-            )
-            _tool_ctx = _ctx_profile
-        elif _ctx_template > 0:
-            logger.warning(
-                "cc_tool: context_window lookup returned 0 and no profile context_window "
-                "— falling back to template context_window=%d (model=%s)",
-                _ctx_template, effective_model,
-            )
-            _tool_ctx = _ctx_template
-        elif _ctx_static > 0:
+        _ctx_static = _get_static_ctx_window(effective_model)
+        if _ctx_static > 0:
             logger.warning(
                 "cc_tool: context_window lookup returned 0 — "
                 "falling back to static model context_window=%d (model=%s)",
@@ -824,7 +823,7 @@ async def _anthropic_tool_handler(
             _tool_ctx = _ctx_static
         else:
             logger.warning(
-                "cc_tool: context_window lookup returned 0 and no profile/template/static "
+                "cc_tool: context_window lookup returned 0 and no static "
                 "context_window — falling back to TOOL_MAX_TOKENS*4 = %d "
                 "(model=%s)", TOOL_MAX_TOKENS * 4, effective_model,
             )
@@ -914,6 +913,10 @@ async def _anthropic_tool_handler(
     )
 
     oai_messages = _anthropic_to_openai_messages(messages, system)
+    logger.info(
+        "cc_tool: checkpoint after anthropic->openai conversion — roles=%s (session=%s, raw_system_present=%s)",
+        [m.get("role") for m in oai_messages], session_id[:8] if session_id else "none", bool(system),
+    )
 
     # Extract user query early — used by memory tiers and episodic write-back.
     _cc_ep_query = next(
@@ -1105,6 +1108,10 @@ async def _anthropic_tool_handler(
                 oai_messages[_sys_idx] = {**oai_messages[_sys_idx], "content": _existing_sys + "\n\n" + _lm_combined}
             else:
                 oai_messages = [{"role": "system", "content": _lm_combined}] + oai_messages
+            logger.info(
+                "cc_tool: checkpoint after Tier2-4 merge — roles=%s (session=%s)",
+                [m.get("role") for m in oai_messages], session_id[:8] if session_id else "none",
+            )
 
     # ── Expert-Template pre-analysis (first turn only) ────────────────────────
     # On the first user turn (no tool_results yet), fire a background planner call
@@ -1162,13 +1169,25 @@ async def _anthropic_tool_handler(
         except Exception as _pae:
             logger.debug("cc_tool: expert pre-analysis skipped: %s", _pae)
 
+    logger.info(
+        "cc_tool: checkpoint before compress — roles=%s (session=%s)",
+        [m.get("role") for m in oai_messages], session_id[:8] if session_id else "none",
+    )
     oai_messages = await _compress_history_responses(
         oai_messages, state.redis_client, session_id,
         threshold=CC_HISTORY_COMPRESS_THRESHOLD,
         keep_turns=CC_HISTORY_COMPRESS_KEEP_TURNS,
     )
+    logger.info(
+        "cc_tool: checkpoint after compress — roles=%s (session=%s)",
+        [m.get("role") for m in oai_messages], session_id[:8] if session_id else "none",
+    )
     oai_messages = await _inject_cc_work_context(
         oai_messages, state.redis_client, session_id,
+    )
+    logger.info(
+        "cc_tool: checkpoint after work-context inject — roles=%s (session=%s)",
+        [m.get("role") for m in oai_messages], session_id[:8] if session_id else "none",
     )
     oai_tools    = _anthropic_tools_to_openai(tools) if tools else None
 
@@ -1398,6 +1417,22 @@ async def _anthropic_tool_handler(
     else:
         _call_url = f"{effective_url}/chat/completions"
         _call_payload = payload
+        # Diagnostic for provider-side message-shape rejections (observed: Hetzner
+        # 400 "System message must be at the beginning", "No user query found in
+        # messages") — cheap, always-on: logs role sequence + system-message count
+        # so a future occurrence has the actual payload shape instead of guesswork.
+        _oai_roles = [m.get("role") for m in oai_messages]
+        _sys_positions = [i for i, r in enumerate(_oai_roles) if r == "system"]
+        if _sys_positions != ([0] if _sys_positions else []):
+            logger.warning(
+                "cc_tool: unexpected system-message position(s) %s in payload to %s "
+                "(roles=%s, session=%s)",
+                _sys_positions, effective_node, _oai_roles, session_id[:8] if session_id else "none",
+            )
+        logger.debug(
+            "cc_tool: OpenAI payload — node=%s msg_count=%d roles=%s",
+            effective_node, len(_oai_roles), _oai_roles,
+        )
 
     # Pre-check: if this endpoint is known to be rate-limited, fail fast instead of timing out.
     # This prevents Claude Code CLI from making 10 retry attempts and risking a DDoS ban.

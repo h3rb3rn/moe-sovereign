@@ -292,13 +292,40 @@ async def _fetch_litellm_model_info(model: str, base_url: str, token: str,
     return {}
 
 
+async def _fetch_openai_models_list_entry(model: str, base_url: str, token: str,
+                                          timeout: float = 5.0) -> dict:
+    """Fetch this model's entry from the plain /v1/models LIST endpoint.
+
+    Some OpenAI-compatible providers (observed: Hetzner's Inference API)
+    implement only the collection endpoint (GET /v1/models, returning
+    {"data": [...]}) and 404 on the per-model path (GET /v1/models/{id}) that
+    fetch_openai_context_window/fetch_openai_max_output try first. Returns the
+    matching entry from `data`, or {} on any failure/no match.
+    """
+    try:
+        import httpx
+        url = f"{base_url.rstrip('/')}/models"
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+            if resp.status_code != 200:
+                return {}
+            for entry in resp.json().get("data", []):
+                if entry.get("id") == model or entry.get("model") == model:
+                    return entry
+    except Exception:
+        pass
+    return {}
+
+
 async def fetch_openai_context_window(model: str, base_url: str, token: str,
                                       timeout: float = 5.0) -> int:
     """Query an OpenAI-compatible /v1/models/{model} endpoint for its context window.
 
-    Falls back to LiteLLM's /model/info when the standard endpoint returns no
-    context-window field (common with LiteLLM-backed providers like AIHUB).
-    Returns 0 when completely unavailable.
+    Falls back to the plain /v1/models LIST endpoint (providers that only
+    implement the collection route, e.g. Hetzner), then to LiteLLM's
+    /model/info when the standard endpoint returns no context-window field
+    (common with LiteLLM-backed providers like AIHUB). Returns 0 when
+    completely unavailable.
     """
     try:
         import httpx
@@ -314,6 +341,16 @@ async def fetch_openai_context_window(model: str, base_url: str, token: str,
                         return val
     except Exception:
         pass
+    # Plain list-endpoint fallback (e.g. Hetzner: only GET /v1/models exists).
+    # "max_model_len" is vLLM's own /v1/models extension field name (observed
+    # live on Hetzner's Inference API) — distinct from the OpenAI-ish names
+    # tried above/below.
+    list_entry = await _fetch_openai_models_list_entry(model, base_url, token, timeout)
+    for field in ("max_model_len", "context_window", "context_length",
+                  "max_context", "max_input_tokens", "max_tokens"):
+        val = list_entry.get(field)
+        if isinstance(val, int) and val > 0:
+            return val
     # LiteLLM fallback: /model/info exposes max_input_tokens per model
     info = await _fetch_litellm_model_info(model, base_url, token, timeout)
     for field in ("context_window", "max_input_tokens"):
@@ -344,6 +381,13 @@ async def fetch_openai_max_output(model: str, base_url: str, token: str,
                         return val
     except Exception:
         pass
+    # Plain list-endpoint fallback (e.g. Hetzner: only GET /v1/models exists)
+    list_entry = await _fetch_openai_models_list_entry(model, base_url, token, timeout)
+    for field in ("max_output_tokens", "max_completion_tokens",
+                  "max_tokens_output", "output_context_window"):
+        val = list_entry.get(field)
+        if isinstance(val, int) and val > 0:
+            return val
     # LiteLLM fallback
     info = await _fetch_litellm_model_info(model, base_url, token, timeout)
     for field in ("max_output_tokens", "max_completion_tokens", "max_tokens"):
