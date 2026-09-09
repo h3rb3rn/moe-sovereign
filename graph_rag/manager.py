@@ -1621,12 +1621,19 @@ class GraphRAGManager:
             "stats": {},
         }
 
+        # Shared with the relations query below: a relation whose subject/object
+        # entity fails this same source filter would otherwise reference an
+        # entity absent from this bundle's own entities[] — silently breaking
+        # import elsewhere (MATCH (s),(o) finds nothing, no exception, no
+        # relation created; see import_knowledge_bundle's relations_created fix).
+        _entity_source_filter = "['ontology', 'extracted', 'ontology_gap_healer']"
+
         async with self.driver.session() as session:
             # Export entities
             domain_filter = "AND e.domain IN $domains" if domains else ""
             q_entities = f"""
                 MATCH (e:Entity)
-                WHERE e.source IN ['ontology', 'extracted', 'ontology_gap_healer']
+                WHERE e.source IN {_entity_source_filter}
                 {domain_filter}
                 RETURN e.name AS name, e.type AS type, e.source AS source,
                        e.aliases AS aliases, e.domain AS domain,
@@ -1659,6 +1666,8 @@ class GraphRAGManager:
             q_relations = f"""
                 MATCH (s:Entity)-[r]->(o:Entity)
                 WHERE type(r) <> 'RELATED_TO_SYNTHESIS'
+                AND s.source IN {_entity_source_filter}
+                AND o.source IN {_entity_source_filter}
                 {trust_filter}
                 {domain_filter.replace('e.domain', 'r.domain')}
                 RETURN s.name AS subject, type(r) AS predicate, o.name AS object,
@@ -1868,8 +1877,13 @@ class GraphRAGManager:
                             stats["relations_created"] += 1
                         continue
 
-                    # Only create if not exists or existing trust is lower
-                    await session.run(
+                    # Only create if not exists or existing trust is lower.
+                    # MATCH (s),(o) silently returns zero rows (no exception) when
+                    # either endpoint doesn't resolve — without checking the actual
+                    # write counters, relations_created was incremented unconditionally
+                    # even when MERGE never ran. Observed live: 1286 reported created,
+                    # only 12 actually landed (+231 pre-existing = 243 total).
+                    _rel_result = await session.run(
                         f"""MATCH (s:Entity {{name: $s}}), (o:Entity {{name: $o}})
                         MERGE (s)-[r:{pred}]->(o)
                         ON CREATE SET
@@ -1893,7 +1907,11 @@ class GraphRAGManager:
                             "now": now,
                         },
                     )
-                    stats["relations_created"] += 1
+                    _rel_summary = await _rel_result.consume()
+                    if _rel_summary.counters.relationships_created > 0:
+                        stats["relations_created"] += 1
+                    else:
+                        stats["relations_skipped"] += 1
                 except Exception as e:
                     stats["errors"].append(f"Relation '{subj}-[{pred}]->{obj}': {e}")
 
