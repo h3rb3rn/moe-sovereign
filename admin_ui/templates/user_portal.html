@@ -3126,6 +3126,18 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                 <button class="btn btn-outline-secondary btn-sm" onclick="refreshConnModels('{{ conn.id }}')">
                   <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'portal.btn_refresh_models') }}
                 </button>
+                <button class="btn btn-outline-secondary btn-sm"
+                        data-conn-id="{{ conn.id }}"
+                        data-rl="{{ conn.rate_limit_config | tojson | forceescape }}"
+                        onclick="openRateLimitModal(this.dataset.connId, JSON.parse(this.dataset.rl))"
+                        title="{{ t(request, 'portal.conn_rate_limit_title') }}">
+                  <i class="bi bi-speedometer2 me-1"></i>{{ t(request, 'portal.conn_rate_limit_btn') }}
+                  {% if conn.rate_limit_config and conn.rate_limit_config.limits %}
+                  {% for lim in conn.rate_limit_config.limits %}
+                  <span class="badge bg-info ms-1">{{ lim.max_requests }}/{% if lim.period_amount and lim.period_amount != 1 %}{{ lim.period_amount }}{% endif %}{{ lim.period_unit or 'second' }}</span>
+                  {% endfor %}
+                  {% endif %}
+                </button>
               </div>
               <div id="conn-models-{{ conn.id }}" style="display:none" class="mt-2">
                 {% if conn.models_cache %}
@@ -3220,7 +3232,134 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         </div>
       </div>
 
+      <!-- Rate-Limit Modal -->
+      <div class="modal fade" id="rateLimitModal" tabindex="-1">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title"><i class="bi bi-speedometer2 me-2"></i>{{ t(request, 'portal.conn_rate_limit_title') }}</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <input type="hidden" id="rl-conn-id" value="">
+              <p class="text-muted small">{{ t(request, 'portal.conn_rate_limit_desc') }}</p>
+              <div class="mb-3 form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="rl-enabled" onchange="_toggleRateLimitFields()">
+                <label class="form-check-label" for="rl-enabled">{{ t(request, 'portal.conn_rate_limit_enable') }}</label>
+              </div>
+              <div id="rl-fields">
+                <div id="rl-rows" class="d-flex flex-column gap-2"></div>
+                <button type="button" class="btn btn-outline-secondary btn-sm mt-2" onclick="_addRateLimitRow()">
+                  <i class="bi bi-plus-lg me-1"></i>{{ t(request, 'portal.conn_rate_limit_add') }}
+                </button>
+                <div class="form-text mt-1">{{ t(request, 'portal.conn_rate_limit_multi_hint') }}</div>
+              </div>
+              <div id="rl-modal-error" class="alert alert-danger d-none mt-3"></div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+              <button type="button" class="btn btn-primary" onclick="saveRateLimit()">{{ t(request, 'btn.save') }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <script>
+      let _rateLimitModal = null;
+      function getRateLimitModal() {
+        if (!_rateLimitModal) _rateLimitModal = new bootstrap.Modal(document.getElementById('rateLimitModal'));
+        return _rateLimitModal;
+      }
+
+      function _toggleRateLimitFields() {
+        document.getElementById('rl-fields').style.opacity = document.getElementById('rl-enabled').checked ? '1' : '.4';
+      }
+
+      function _addRateLimitRow(maxRequests, periodAmount, periodUnit) {
+        const row = document.createElement('div');
+        row.className = 'd-flex align-items-end gap-2 rl-row';
+        row.innerHTML = `
+          <div>
+            <label class="form-label small mb-1">{{ t(request, 'portal.conn_rate_limit_requests') }}</label>
+            <input type="number" class="form-control rl-max-requests" min="1" step="1" value="${maxRequests || 60}" style="width:90px">
+          </div>
+          <span class="pb-2">/</span>
+          <div>
+            <label class="form-label small mb-1">{{ t(request, 'portal.conn_rate_limit_period_amount') }}</label>
+            <input type="number" class="form-control rl-period-amount" min="1" step="1" value="${periodAmount || 1}" style="width:70px">
+          </div>
+          <div>
+            <label class="form-label small mb-1">{{ t(request, 'portal.conn_rate_limit_period_unit') }}</label>
+            <select class="form-select rl-period-unit">
+              <option value="second" ${periodUnit==='second'?'selected':''}>{{ t(request, 'portal.conn_rate_limit_unit_second') }}</option>
+              <option value="minute" ${(periodUnit||'minute')==='minute'?'selected':''}>{{ t(request, 'portal.conn_rate_limit_unit_minute') }}</option>
+              <option value="hour" ${periodUnit==='hour'?'selected':''}>{{ t(request, 'portal.conn_rate_limit_unit_hour') }}</option>
+            </select>
+          </div>
+          <button type="button" class="btn btn-outline-danger btn-sm mb-1" onclick="this.closest('.rl-row').remove()" title="{{ t(request, 'btn.remove') }}">
+            <i class="bi bi-x"></i>
+          </button>`;
+        document.getElementById('rl-rows').appendChild(row);
+      }
+
+      function openRateLimitModal(connId, rateLimitConfig) {
+        document.getElementById('rl-conn-id').value = connId;
+        const cfg = rateLimitConfig || {};
+        const limits = Array.isArray(cfg.limits) ? cfg.limits : [];
+        document.getElementById('rl-enabled').checked = limits.length > 0;
+        document.getElementById('rl-rows').innerHTML = '';
+        if (limits.length > 0) {
+          limits.forEach(l => _addRateLimitRow(l.max_requests, l.period_amount, l.period_unit));
+        } else {
+          _addRateLimitRow(60, 1, 'minute');
+        }
+        document.getElementById('rl-modal-error').classList.add('d-none');
+        _toggleRateLimitFields();
+        getRateLimitModal().show();
+      }
+
+      async function saveRateLimit() {
+        const id  = document.getElementById('rl-conn-id').value;
+        const errEl = document.getElementById('rl-modal-error');
+        let body = {};
+        if (document.getElementById('rl-enabled').checked) {
+          const limits = [];
+          for (const row of document.querySelectorAll('#rl-rows .rl-row')) {
+            const maxRequests  = parseInt(row.querySelector('.rl-max-requests').value, 10);
+            const periodAmount = parseInt(row.querySelector('.rl-period-amount').value, 10);
+            if (!maxRequests || maxRequests <= 0 || !periodAmount || periodAmount <= 0) {
+              errEl.textContent = 'Anzahl Requests und Anzahl Einheit müssen größer als 0 sein.';
+              errEl.classList.remove('d-none');
+              return;
+            }
+            limits.push({
+              max_requests:  maxRequests,
+              period_amount: periodAmount,
+              period_unit:   row.querySelector('.rl-period-unit').value,
+            });
+          }
+          if (limits.length === 0) {
+            errEl.textContent = 'Mindestens ein Limit angeben oder Rate-Limit deaktivieren.';
+            errEl.classList.remove('d-none');
+            return;
+          }
+          body = {limits};
+        }
+        const res = await fetch(`/user/api/connections/${id}/rate-limit`, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body),
+        });
+        if (res.ok) {
+          getRateLimitModal().hide();
+          window.location.reload();
+        } else {
+          const err = await res.json().catch(() => ({}));
+          errEl.textContent = err.detail || 'Error saving rate limit';
+          errEl.classList.remove('d-none');
+        }
+      }
+
       let _connModal = null;
       function getConnModal() {
         if (!_connModal) _connModal = new bootstrap.Modal(document.getElementById('connModal'));

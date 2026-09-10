@@ -12,6 +12,46 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# The entire installer body lives inside this one function, called only on
+# the very last line of the file. `curl | bash` streams the download straight
+# into bash's parser as it arrives; without this wrapper, a connection that
+# drops partway through would let bash execute every top-level command it had
+# already parsed before hitting the cutoff — a truncated, partially-run
+# script. A function body has to be fully present (matching braces) before
+# bash will parse and run it at all, so a truncated download instead fails
+# to define the function (or the trailing call is simply never reached) and
+# nothing in it executes.
+moe_sovereign_install() {
+
+# --- Interactive-terminal detection ------------------------------------------
+# Every prompt below reads from /dev/tty explicitly (not stdin), because under
+# `curl | bash` stdin is the script itself, not the user's keyboard. That
+# requires an actual controlling terminal to exist. When one doesn't — no pty
+# at all (some CI runners, `ssh host cmd` without -t, certain sandboxed/
+# automation shells) — opening /dev/tty for the redirect fails outright, and
+# under `set -e` that aborted the entire install at the very first prompt
+# with a bare "/dev/tty: No such device or address". Detect that once, up
+# front, and fall back to accepting every default non-interactively instead
+# of crashing. All prompts below already have a sensible `${var:-default}`
+# fallback for exactly this case (a real user just pressing ENTER).
+# IMPORTANT: the probe must run in a subshell. `exec 3<>/dev/tty` in the
+# current shell leaves bash's terminal handling in a state where every
+# later `read -p ... < /dev/tty` still reads input correctly but silently
+# stops printing its own prompt text — the exact "stdout looks broken,
+# have to guess what's being asked" bug. A subshell probes the same fd
+# without leaking that state back into the running installer.
+if (exec 3<>/dev/tty) 2>/dev/null; then
+  HAS_TTY="1"
+else
+  HAS_TTY="0"
+  echo "  [!] No controlling terminal detected — installing non-interactively" >&2
+  echo "      and accepting every default shown below. To customize the" >&2
+  echo "      installation, either run this script from a real terminal" >&2
+  echo "      (download it first: 'curl -O .../install.sh && bash install.sh')" >&2
+  echo "      or pre-set the relevant environment variables before running it." >&2
+  echo "" >&2
+fi
+
 # --- Configurable defaults (override via environment) -----------------------
 MOE_REPO_URL="${MOE_REPO_URL:-https://github.com/h3rb3rn/moe-sovereign.git}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/moe-sovereign}"
@@ -192,7 +232,7 @@ echo "  Press ENTER to accept the default shown in [brackets]."
 echo ""
 
 _default_install="${INSTALL_DIR:-/opt/moe-sovereign}"
-read -rp "  App installation directory [${_default_install}]: " _tmp_install < /dev/tty
+[[ "$HAS_TTY" == "1" ]] && read -rp "  App installation directory [${_default_install}]: " _tmp_install < /dev/tty
 INSTALL_DIR="${_tmp_install:-${_default_install}}"
 MOE_ENV_FILE="${INSTALL_DIR}/.env"
 
@@ -208,12 +248,13 @@ echo ""
 # their passwords into their data volumes on first init — regenerating .env
 # would lock every service out of its own data.
 #
-# Update mode runs 4 steps — git pull is FIRST so subsequent steps always
+# Update mode runs 5 steps — git pull is FIRST so subsequent steps always
 # work with the newest code and the newest .env.example:
 #   1. git pull                    (with dirty-tree guard and diverge recovery)
 #   2. .env migration              (add new keys from .env.example; skip secrets)
-#   3. Re-apply volume ownership   (fixes container UID mismatches)
-#   4. docker/podman compose build + up
+#   3. .env plausibility check     (self-heal blank non-secret keys; flag the rest)
+#   4. Re-apply volume ownership   (fixes container UID mismatches)
+#   5. docker/podman compose build + up
 # Use an array so "docker compose" is two words regardless of IFS=$'\n\t'.
 _upd_rt=()
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
@@ -295,6 +336,10 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     fi
   fi
   if [[ "${vol_count:-0}" -gt 0 ]]; then
+    # Run every remaining step from INSTALL_DIR — most operations below already
+    # use absolute paths, but compose itself needs its cwd to be the project
+    # directory. Doing this once, up front, means no step has to remember it.
+    cd "${INSTALL_DIR}"
 
     # ── Read current version before any changes ───────────────────────────────
     _upd_ver_before=""
@@ -344,7 +389,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
         echo "    s) Stash changes, then pull  (recommended — changes are saved)"
         echo "    k) Keep changes — skip git pull"
         echo "    a) Abort update"
-        read -rp "  Choice [s/k/a] (default: s): " _pull_choice < /dev/tty
+        [[ "$HAS_TTY" == "1" ]] && read -rp "  Choice [s/k/a] (default: s): " _pull_choice < /dev/tty
         _pull_choice="${_pull_choice:-s}"
         case "${_pull_choice,,}" in
           s|stash)
@@ -368,7 +413,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       fi
 
       if [[ ${_skip_pull} -eq 0 ]]; then
-        echo "  [1/4] Pulling latest code..."
+        echo "  [1/5] Pulling latest code..."
         if ! git -C "${INSTALL_DIR}" pull --ff-only 2>&1; then
           # Fast-forward failed — branches may have diverged (e.g. force-push upstream)
           echo ""
@@ -379,7 +424,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
           echo "    r) Reset to origin  (discards local commits — data volumes are safe)"
           echo "    k) Keep current code — skip pull"
           echo "    a) Abort"
-          read -rp "  Choice [r/k/a] (default: k): " _ff_choice < /dev/tty
+          [[ "$HAS_TTY" == "1" ]] && read -rp "  Choice [r/k/a] (default: k): " _ff_choice < /dev/tty
           _ff_choice="${_ff_choice:-k}"
           case "${_ff_choice,,}" in
             r|reset)
@@ -405,12 +450,12 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
         || git -C "${INSTALL_DIR}" log -1 --format='%h (%s)' 2>/dev/null \
         || echo "unknown")
       if [[ "${_upd_ver_before}" != "${_upd_ver_after}" ]]; then
-        echo "  [1/4] Code updated: ${_upd_ver_before} → ${_upd_ver_after} ✓"
+        echo "  [1/5] Code updated: ${_upd_ver_before} → ${_upd_ver_after} ✓"
       else
-        echo "  [1/4] Already at latest (${_upd_ver_after}) ✓"
+        echo "  [1/5] Already at latest (${_upd_ver_after}) ✓"
       fi
     else
-      echo "  [1/4] ${INSTALL_DIR} is not a git repo — skipping pull."
+      echo "  [1/5] ${INSTALL_DIR} is not a git repo — skipping pull."
       _upd_ver_after="${_upd_ver_before:-unknown}"
     fi
 
@@ -445,7 +490,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
         _ekey="${_line%%=*}"
         [[ -z "$_ekey"                 ]] && continue
         if ! grep -qE "^${_ekey}=" "${MOE_ENV_FILE}" 2>/dev/null; then
-          if echo "$_ekey" | grep -qiE '(PASSWORD|SECRET|TOKEN|_PASS$|_KEY$|PRIVATE)'; then
+          if echo "$_ekey" | grep -qiE '(PASSWORD|SECRET|_PASS$|_KEY$|PRIVATE)'; then
             # Credential — leave empty; admin must set manually if needed
             printf '%s=\n' "${_ekey}" >> "${MOE_ENV_FILE}"
             echo "  [migrate] ${_ekey}= (credential — set manually if needed)"
@@ -459,12 +504,108 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       done < "${_env_example}"
     fi
     if [[ ${_migrated} -gt 0 ]]; then
-      echo "  [2/4] .env migrated — ${_migrated} new key(s) added ✓"
+      echo "  [2/5] .env migrated — ${_migrated} new key(s) added ✓"
     else
-      echo "  [2/4] .env up to date ✓"
+      echo "  [2/5] .env up to date ✓"
     fi
 
-    # ── STEP 3: Re-apply container UID ownership ──────────────────────────────
+    # ── STEP 3: .env plausibility check ───────────────────────────────────────
+    # A blank value for a key is either (a) a credential the admin hasn't set
+    # yet — expected, nothing to do — or (b) a non-secret config key that
+    # ended up empty by accident (stale migration bug, manual edit gone
+    # wrong, ...). For (b) we self-heal from .env.example's own default,
+    # since that's exactly what Phase B above would have written had the key
+    # not already existed. We also catch the case where a key holds a value
+    # that doesn't parse where .env.example's default is a plain integer —
+    # that can't be auto-corrected (we don't know the intended number), so
+    # it's reported instead. Duplicate "${_ekey}=" lines (an artifact of
+    # earlier buggy runs appending a second, blank copy of a key that
+    # already existed) are collapsed into a single correct line; compose
+    # itself would otherwise silently use whichever duplicate comes last.
+    _plaus_fixed=0
+    _plaus_manual=()
+    if [[ -f "${_env_example}" ]]; then
+      while IFS= read -r _line; do
+        [[ "$_line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${_line// }"            ]] && continue
+        _ekey="${_line%%=*}"
+        [[ -z "$_ekey"                 ]] && continue
+        _exval="${_line#*=}"
+        _dup_count="$(grep -cE "^${_ekey}=" "${MOE_ENV_FILE}" 2>/dev/null || echo 0)"
+        # Last *non-empty* occurrence wins here, not simply the last line: a
+        # stray blank duplicate appended after a real, user-customized value
+        # must not make us throw that value away in favor of the generic
+        # .env.example default. (Compose itself has no such preference — it
+        # always takes the literal last line — which is exactly why any
+        # duplicate at all needs collapsing below.)
+        _curval="$(awk -F= -v k="${_ekey}" \
+          'index($0, k "=") == 1 { v2 = substr($0, length(k) + 2); if (v2 != "") v = v2 } END { print v }' \
+          "${MOE_ENV_FILE}" 2>/dev/null)"
+
+        _newval=""; _reason=""
+        if [[ -z "${_curval}" ]]; then
+          # Credentials are meant to stay empty until the admin sets them —
+          # already communicated by Phase B, nothing more to check here.
+          echo "$_ekey" | grep -qiE '(PASSWORD|SECRET|_PASS$|_KEY$|PRIVATE)' && continue
+          [[ -z "${_exval}" ]] && continue   # .env.example is blank too — intentionally optional
+          _newval="${_exval}"; _reason="was empty — restored default"
+        elif [[ "${_dup_count}" -gt 1 ]]; then
+          _newval="${_curval}"; _reason="had duplicate lines — collapsed to"
+        fi
+
+        if [[ -n "${_newval}" ]]; then
+          grep -vE "^${_ekey}=" "${MOE_ENV_FILE}" > "${MOE_ENV_FILE}.tmp" || true
+          printf '%s=%s\n' "${_ekey}" "${_newval}" >> "${MOE_ENV_FILE}.tmp"
+          mv "${MOE_ENV_FILE}.tmp" "${MOE_ENV_FILE}"
+          echo "  [plausibility-fix] ${_ekey} ${_reason} '${_newval}'"
+          (( _plaus_fixed++ )) || true
+        elif [[ "${_exval}" =~ ^-?[0-9]+$ ]] && ! [[ "${_curval}" =~ ^-?[0-9]+$ ]]; then
+          _plaus_manual+=("${_ekey}=${_curval}  (expected a whole number, e.g. ${_exval})")
+        fi
+      done < "${_env_example}"
+    fi
+
+    # Cross-check against config.py's own int(os.getenv(...)) call sites too.
+    # .env.example's committed value is normally a reliable stand-in for the
+    # type config.py expects, but it can drift (e.g. config.py parsing a key
+    # with int() while .env.example — correctly — ships a fractional-seconds
+    # value for it): read the requirement from the code that actually does
+    # the parsing, not from the template.
+    _config_py="${INSTALL_DIR}/config.py"
+    if [[ -f "${_config_py}" ]]; then
+      while IFS= read -r _ikey; do
+        [[ -z "${_ikey}" ]] && continue
+        # awk, not grep|tail|cut: under `set -o pipefail`, a grep that matches
+        # nothing (any key config.py references but .env doesn't define yet)
+        # makes the whole pipeline's exit status non-zero, and `set -e` kills
+        # the script right here with no error message — awk's END block
+        # always runs and exits 0, match or no match.
+        _curval="$(awk -F= -v k="${_ikey}" \
+          'index($0, k "=") == 1 { v2 = substr($0, length(k) + 2); if (v2 != "") v = v2 } END { print v }' \
+          "${MOE_ENV_FILE}" 2>/dev/null)"
+        [[ -z "${_curval}" ]] && continue                      # blank — already handled above
+        [[ "${_curval}" =~ ^-?[0-9]+$ ]] && continue            # already a valid integer
+        printf '%s\n' "${_plaus_manual[@]+"${_plaus_manual[@]}"}" | grep -qF "${_ikey}=" && continue  # already flagged above
+        _plaus_manual+=("${_ikey}=${_curval}  (config.py requires a whole number)")
+      done < <(grep -oE 'int\(os\.getenv\("[A-Z0-9_]+"' "${_config_py}" | sed -E 's/^int\(os\.getenv\("//; s/"$//')
+    fi
+
+    if [[ ${#_plaus_manual[@]} -gt 0 ]]; then
+      echo ""
+      echo "  [!] .env plausibility check found value(s) that need a human to fix:"
+      for _pm in "${_plaus_manual[@]}"; do
+        echo "      - ${_pm}"
+      done
+      echo "      Edit ${MOE_ENV_FILE}, then re-run: sudo ${_upd_rt[*]} up -d"
+      echo ""
+    fi
+    if [[ ${_plaus_fixed} -gt 0 ]]; then
+      echo "  [3/5] .env plausibility check — ${_plaus_fixed} value(s) restored ✓"
+    else
+      echo "  [3/5] .env plausibility check — no issues found ✓"
+    fi
+
+    # ── STEP 4: Re-apply container UID ownership ──────────────────────────────
     _sudo mkdir -p \
       "${_upd_data}/kafka-data"        "${_upd_data}/neo4j-data"     \
       "${_upd_data}/neo4j-logs"        "${_upd_data}/agent-logs"     \
@@ -516,11 +657,12 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     _upd_chown 1001 0      "${_upd_data}/checkpoint-archives"
     _upd_chown 472  472    "${_upd_graf}/data" "${_upd_graf}/dashboards"
 
-    echo "  [3/4] Volume permissions reset ✓"
+    echo "  [4/5] Volume permissions reset ✓"
 
-    # ── STEP 4: Rebuild and restart containers ────────────────────────────────
-    echo "  [4/4] Rebuilding containers..."
-    cd "${INSTALL_DIR}"
+    # ── STEP 5: Rebuild and restart containers ────────────────────────────────
+    # (already running from INSTALL_DIR — cd'd there as soon as the update was
+    # confirmed, see top of this block)
+    echo "  [5/5] Rebuilding containers..."
     _upd_group=""; [[ "${_upd_rt[0]}" == "docker" ]] && _upd_group="docker"
     _upd_q="";    [[ "${_upd_rt[0]}" == "docker" ]] && _upd_q="--quiet"
     # Read active compose profiles from .env so optional services (caddy, neo4j,
@@ -537,7 +679,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     # is removed cleanly before the new image is started.
     # Docker handles recreation in-place; the extra down is a no-op there.
     if [[ "${_upd_rt[0]}" == podman* ]]; then
-      echo "  [4/4] Stopping existing containers (Podman)..."
+      echo "  [5/5] Stopping existing containers (Podman)..."
       "${_upd_rt[@]}" "${_upd_profiles[@]}" down 2>/dev/null || true
 
       # After compose down, bind-mount data directories may be owned by UIDs
@@ -630,7 +772,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       if [[ ${_elapsed} -ge ${_max_wait} ]]; then
         echo ""
         echo "  [!] API did not respond within ${_max_wait}s."
-        echo "      Check logs: sudo ${_upd_rt[*]} logs langgraph-app"
+        echo "      Check logs: cd ${INSTALL_DIR} && sudo ${_upd_rt[*]} logs langgraph-app"
         break
       fi
       printf "."
@@ -649,8 +791,8 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       echo "  Version : ${_upd_ver_after:-unknown} (no code change)"
     fi
     echo ""
-    echo "  Logs:    sudo ${_upd_rt[*]} logs -f"
-    echo "  Status:  sudo ${_upd_rt[*]} ps"
+    echo "  Logs:    cd ${INSTALL_DIR} && sudo ${_upd_rt[*]} logs -f"
+    echo "  Status:  cd ${INSTALL_DIR} && sudo ${_upd_rt[*]} ps"
     echo "  =================================================================="
     echo ""
     exit 0
@@ -772,7 +914,7 @@ else
   echo "  2) Podman     — daemonless, rootless OCI runtime, drop-in compatible"
   echo ""
   while true; do
-    read -rp "  Your choice [1/2, default 1]: " _rt_choice < /dev/tty
+    [[ "$HAS_TTY" == "1" ]] && read -rp "  Your choice [1/2, default 1]: " _rt_choice < /dev/tty
     _rt_choice="${_rt_choice:-1}"
     case "${_rt_choice}" in
       1) CONTAINER_RUNTIME="docker"; COMPOSE="docker compose"; COMPOSE_CMD=(docker compose); break ;;
@@ -1068,10 +1210,10 @@ if [[ -f "${MOE_ENV_FILE}" ]]; then
   [[ -n "$_prev_graf" ]] && _graf_default="$_prev_graf"
 fi
 
-read -rp "  Persistent data directory   [${_data_default}]: " _tmp_data < /dev/tty
+[[ "$HAS_TTY" == "1" ]] && read -rp "  Persistent data directory   [${_data_default}]: " _tmp_data < /dev/tty
 MOE_DATA_ROOT="${_tmp_data:-${_data_default}}"
 
-read -rp "  Grafana data directory      [${_graf_default}]: " _tmp_graf < /dev/tty
+[[ "$HAS_TTY" == "1" ]] && read -rp "  Grafana data directory      [${_graf_default}]: " _tmp_graf < /dev/tty
 GRAFANA_DATA_ROOT="${_tmp_graf:-${_graf_default}}"
 
 echo "  Data root:   ${MOE_DATA_ROOT}"
@@ -1105,6 +1247,11 @@ _sudo mkdir -p \
 
 # INSTALL_DIR is owned by the deploy user so git clone and .env writes work without sudo.
 _sudo chown "$DEPLOY_USER":"$DEPLOY_USER" "${INSTALL_DIR}"
+
+# Run every remaining step from INSTALL_DIR — most operations below already
+# use absolute paths, but compose itself needs its cwd to be the project
+# directory. Doing this once, up front, means no step has to remember it.
+cd "${INSTALL_DIR}"
 
 # Files that must exist as regular files (not directories) before the container
 # runtime mounts them.  Create them owned by the deploy user so rootless
@@ -1301,6 +1448,19 @@ prompt_input() {
     fi
   fi
 
+  if [[ "$HAS_TTY" != "1" ]]; then
+    # No controlling terminal — can't prompt, let alone re-prompt on a
+    # validation failure. Accept the default silently; only a required
+    # field with no default has no sane non-interactive outcome.
+    if [[ -z "$default_val" && "$required" == "true" ]]; then
+      echo "  [!] '${prompt_text}' has no default and requires a terminal to set." >&2
+      echo "      Re-run from a real terminal, or pre-set its environment variable." >&2
+      exit 1
+    fi
+    printf -v "${varname}" '%s' "${default_val}"
+    return
+  fi
+
   while true; do
     if [[ "$is_secret" == "true" ]]; then
       read -rsp "  ${prompt_text}${display_default}: " input_val < /dev/tty
@@ -1417,7 +1577,7 @@ prompt_password() {
   if [[ -n "$existing" ]]; then
     # Update path — keep existing unless user types a replacement
     while true; do
-      read -rsp "  Admin password (ENTER keeps existing): " _pw1 < /dev/tty; echo ""
+      [[ "$HAS_TTY" == "1" ]] && read -rsp "  Admin password (ENTER keeps existing): " _pw1 < /dev/tty; echo ""
       if [[ -z "$_pw1" ]]; then
         printf -v "${varname}" '%s' "${existing}"
         break
@@ -1426,7 +1586,7 @@ prompt_password() {
         echo "  [!] Password must be at least 10 characters. Try again."
         continue
       fi
-      read -rsp "  Confirm new password: " _pw2 < /dev/tty; echo ""
+      [[ "$HAS_TTY" == "1" ]] && read -rsp "  Confirm new password: " _pw2 < /dev/tty; echo ""
       if [[ "$_pw1" != "$_pw2" ]]; then
         echo "  [!] Passwords do not match. Try again."
         continue
@@ -1437,7 +1597,7 @@ prompt_password() {
   else
     # Fresh install — require confirmation and enforce minimum strength
     while true; do
-      read -rsp "  Admin password (min 10 chars): " _pw1 < /dev/tty; echo ""
+      [[ "$HAS_TTY" == "1" ]] && read -rsp "  Admin password (min 10 chars): " _pw1 < /dev/tty; echo ""
       if [[ -z "$_pw1" ]]; then
         echo "  [!] Password is required."
         continue
@@ -1446,7 +1606,7 @@ prompt_password() {
         echo "  [!] Password must be at least 10 characters (got ${#_pw1}). Try again."
         continue
       fi
-      read -rsp "  Confirm password: " _pw2 < /dev/tty; echo ""
+      [[ "$HAS_TTY" == "1" ]] && read -rsp "  Confirm password: " _pw2 < /dev/tty; echo ""
       if [[ "$_pw1" != "$_pw2" ]]; then
         echo "  [!] Passwords do not match. Try again."
         continue
@@ -1479,7 +1639,7 @@ echo "  Neo4j powers GraphRAG (knowledge-graph enrichment) and the ontology cura
 echo "  Adds ~1.5 GB RAM (raises minimum from 4 GB → 6 GB). Skip on small VMs."
 INSTALL_NEO4J="true"
 while true; do
-  read -rp "  Install Neo4j GraphRAG? [Y/n]: " _neo4j_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Install Neo4j GraphRAG? [Y/n]: " _neo4j_choice < /dev/tty
   _neo4j_choice="${_neo4j_choice:-Y}"
   case "${_neo4j_choice,,}" in
     y|yes) INSTALL_NEO4J="true";  break ;;
@@ -1495,7 +1655,7 @@ echo "  Dozzle log viewer, and AKHQ Kafka event inspection."
 echo "  Adds ~500 MB RAM. Recommended for observability and topic debugging."
 INSTALL_MONITORING="true"
 while true; do
-  read -rp "  Install Monitoring Tools (Prometheus, Grafana, Dozzle, AKHQ)? [Y/n]: " _mon_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Install Monitoring Tools (Prometheus, Grafana, Dozzle, AKHQ)? [Y/n]: " _mon_choice < /dev/tty
   _mon_choice="${_mon_choice:-Y}"
   case "${_mon_choice,,}" in
     y|yes) INSTALL_MONITORING="true";  break ;;
@@ -1510,7 +1670,7 @@ echo "  Caddy is a built-in TLS reverse proxy for this stack."
 echo "  Skip if you already run Nginx, Traefik, or another proxy in front."
 INSTALL_CADDY="false"
 while true; do
-  read -rp "  Install Caddy reverse proxy? [y/N]: " _caddy_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Install Caddy reverse proxy? [y/N]: " _caddy_choice < /dev/tty
   _caddy_choice="${_caddy_choice:-N}"
   case "${_caddy_choice,,}" in
     y|yes) INSTALL_CADDY="true";  break ;;
@@ -1542,7 +1702,7 @@ INSTALL_AUTHENTIK="false"
 AUTHENTIK_BOOTSTRAP_EMAIL_INPUT=""
 AUTHENTIK_BOOTSTRAP_PASSWORD_INPUT=""
 while true; do
-  read -rp "  Deploy Authentik SSO server? [y/N]: " _authentik_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Deploy Authentik SSO server? [y/N]: " _authentik_choice < /dev/tty
   _authentik_choice="${_authentik_choice:-N}"
   case "${_authentik_choice,,}" in
     y|yes) INSTALL_AUTHENTIK="true";  break ;;
@@ -1575,7 +1735,7 @@ if [[ "$INSTALL_AUTHENTIK" == "true" ]]; then
 else
   echo "  Configure OIDC against an existing Authentik (or other IdP)?"
   while true; do
-    read -rp "  Configure Authentik/OIDC SSO? [y/N]: " _sso_choice < /dev/tty
+    [[ "$HAS_TTY" == "1" ]] && read -rp "  Configure Authentik/OIDC SSO? [y/N]: " _sso_choice < /dev/tty
     _sso_choice="${_sso_choice:-N}"
     case "${_sso_choice,,}" in
       y|yes) INSTALL_SSO="true";  break ;;
@@ -1621,7 +1781,7 @@ echo "  OpenLineage audit tracking, and lakeFS data versioning (Git for data)."
 echo ""
 echo "  Requires approx. 8.5 GB additional RAM (NiFi JVM + Marquez + lakeFS + JupyterLab)."
 echo ""
-read -rp "  Install MoE Codex (JupyterLab, NiFi, Marquez, lakeFS)? [y/N]: " _eds_choice < /dev/tty
+[[ "$HAS_TTY" == "1" ]] && read -rp "  Install MoE Codex (JupyterLab, NiFi, Marquez, lakeFS)? [y/N]: " _eds_choice < /dev/tty
 _eds_choice="${_eds_choice:-N}"
 case "${_eds_choice,,}" in
   y|yes) INSTALL_CODEX=true  ;;
@@ -1647,7 +1807,7 @@ PULL_JUDGE_MODEL="false"
 PULL_EXPERT_MODEL="false"
 
 while true; do
-  read -rp "  Deploy local Ollama instance (Docker container)? [y/N]: " _ollama_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Deploy local Ollama instance (Docker container)? [y/N]: " _ollama_choice < /dev/tty
   _ollama_choice="${_ollama_choice:-N}"
   case "${_ollama_choice,,}" in
     y|yes) INSTALL_OLLAMA="true"; break ;;
@@ -1665,7 +1825,7 @@ if [[ "$INSTALL_OLLAMA" == "true" ]]; then
   fi
   if [[ "$_has_nvidia" == "true" ]]; then
     echo "  NVIDIA GPU detected on this host."
-    read -rp "  Enable NVIDIA GPU acceleration for Ollama? [Y/n]: " _gpu_choice < /dev/tty
+    [[ "$HAS_TTY" == "1" ]] && read -rp "  Enable NVIDIA GPU acceleration for Ollama? [Y/n]: " _gpu_choice < /dev/tty
     _gpu_choice="${_gpu_choice:-Y}"
     case "${_gpu_choice,,}" in
       n|no) OLLAMA_GPU_ENABLED="false" ;;
@@ -1673,7 +1833,7 @@ if [[ "$INSTALL_OLLAMA" == "true" ]]; then
     esac
   else
     echo "  No NVIDIA GPU detected — Ollama will run in CPU mode."
-    read -rp "  Enable NVIDIA GPU container passthrough anyway? [y/N]: " _gpu_choice < /dev/tty
+    [[ "$HAS_TTY" == "1" ]] && read -rp "  Enable NVIDIA GPU container passthrough anyway? [y/N]: " _gpu_choice < /dev/tty
     _gpu_choice="${_gpu_choice:-N}"
     case "${_gpu_choice,,}" in
       y|yes) OLLAMA_GPU_ENABLED="true" ;;
@@ -1685,21 +1845,21 @@ if [[ "$INSTALL_OLLAMA" == "true" ]]; then
   echo "  --- Model Pulling Options (Individual Confirmation) ---"
   echo "  You can optionally pre-pull Sovereign models into the local Ollama instance:"
   
-  read -rp "  Pull Sovereign Planner LLM (moe-sovereign-student:4b from HuggingFace)? [y/N]: " _p_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Pull Sovereign Planner LLM (moe-sovereign-student:4b from HuggingFace)? [y/N]: " _p_choice < /dev/tty
   _p_choice="${_p_choice:-N}"
   case "${_p_choice,,}" in
     y|yes) PULL_PLANNER_MODEL="true" ;;
     *)     PULL_PLANNER_MODEL="false" ;;
   esac
 
-  read -rp "  Pull Sovereign Judge & Refiner LLM (sovereign-judge:35b-q4km from HuggingFace)? [y/N]: " _j_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Pull Sovereign Judge & Refiner LLM (sovereign-judge:35b-q4km from HuggingFace)? [y/N]: " _j_choice < /dev/tty
   _j_choice="${_j_choice:-N}"
   case "${_j_choice,,}" in
     y|yes) PULL_JUDGE_MODEL="true" ;;
     *)     PULL_JUDGE_MODEL="false" ;;
   esac
 
-  read -rp "  Pull General 35B Expert LLM (qwen3.6:35b)? [y/N]: " _e_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Pull General 35B Expert LLM (qwen3.6:35b)? [y/N]: " _e_choice < /dev/tty
   _e_choice="${_e_choice:-N}"
   case "${_e_choice,,}" in
     y|yes) PULL_EXPERT_MODEL="true" ;;
@@ -1746,7 +1906,7 @@ if [[ "${_ram_total_mb}" -gt 0 ]]; then
       echo "        - Skipping Neo4j (-1.5 GB)"
     echo "        - Adding swap space as emergency buffer"
     echo ""
-    read -rp "  Continue anyway? [y/N]: " _ram_cont < /dev/tty
+    [[ "$HAS_TTY" == "1" ]] && read -rp "  Continue anyway? [y/N]: " _ram_cont < /dev/tty
     [[ "${_ram_cont,,}" == "y" || "${_ram_cont,,}" == "yes" ]] || { echo "  Aborted."; exit 1; }
   elif [[ "${_ram_total_mb}" -lt "${_ram_rec_mb}" ]]; then
     echo "  [!] Note: ${_ram_rec_gb} GB recommended for this stack — performance may vary."
@@ -2149,8 +2309,6 @@ echo "[8/9] Building and starting MoE Sovereign..."
 echo "  This may take several minutes on first run (image pulls + builds)."
 echo ""
 
-cd "${INSTALL_DIR}"
-
 # Generate garage.toml if it does not exist yet.
 # Garage requires a static config file mounted at /etc/garage.toml:ro.
 # Podman (unlike Docker) refuses to start a container when a file bind-mount
@@ -2318,7 +2476,7 @@ while true; do
   if [[ $ELAPSED -ge $MAX_WAIT ]]; then
     echo ""
     echo "  [!] API did not respond within ${MAX_WAIT}s."
-    echo "      Check logs with: sudo ${COMPOSE} -f ${INSTALL_DIR}/docker-compose.yml logs langgraph-app"
+    echo "      Check logs with: cd ${INSTALL_DIR} && sudo ${COMPOSE} logs langgraph-app"
     echo "      The rest of the stack may still be starting — this is normal"
     echo "      on first run while models and databases initialize."
     break
@@ -2440,9 +2598,9 @@ echo "       https://huggingface.co/h3rb3rn/Qwen3-MoE-35B-Sovereign-Judge-v3-GGU
 echo "       ollama run hf.co/h3rb3rn/Qwen3-MoE-35B-Sovereign-Judge-v3-GGUF:sovereign-judge-35b-q4_k_m.gguf"
 echo "  4. Start chatting at your Open WebUI instance"
 echo ""
-echo "  Logs:    sudo ${COMPOSE} logs -f"
-echo "  Status:  sudo ${COMPOSE} ps"
-echo "  Stop:    sudo ${COMPOSE} down"
+echo "  Logs:    cd ${INSTALL_DIR} && sudo ${COMPOSE} logs -f"
+echo "  Status:  cd ${INSTALL_DIR} && sudo ${COMPOSE} ps"
+echo "  Stop:    cd ${INSTALL_DIR} && sudo ${COMPOSE} down"
 echo ""
 echo "  Project: https://github.com/h3rb3rn/moe-sovereign"
 echo "  Docs:    https://docs.moe-sovereign.org"
@@ -2460,3 +2618,6 @@ echo "      Full firewall recipe (UFW / firewalld / iptables):"
 echo "      https://docs.moe-sovereign.org/deployment/firewall/"
 echo ""
 echo "=========================================================================="
+}
+
+moe_sovereign_install "$@"

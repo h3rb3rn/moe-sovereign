@@ -121,6 +121,7 @@
                   <th style="width:60px" title="{{ t(request, 'tip.factor') }}">{{ t(request, 'table.factor') }} <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></th>
                   <th style="width:75px" title="{{ t(request, 'tip.timeout') }}">{{ t(request, 'lbl.timeout') }} <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></th>
                   <th style="width:70px" title="Pre-analysis delay in seconds before the planner fires (per server). Accounts for slow model load times (e.g. large fp16 models).">Delay s <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></th>
+                  <th style="width:150px" title="Self-imposed outbound rate limit toward this provider: N requests per M seconds/minutes/hours. MoE-Sovereign queues and waits internally instead of forwarding calls the provider would answer with 429. Empty = unlimited.">Rate-Limit <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></th>
                   <th style="width:80px">API-Typ</th>
                   <th style="width:130px">{{ t(request, 'lbl.token') }}</th>
                   <th style="width:45px" title="{{ t(request, 'tip.active_toggle') }}">{{ t(request, 'status.active') }}</th>
@@ -151,6 +152,22 @@
                     <input type="number" name="srv_load_delay_{{ loop.index0 }}"
                            value="{{ srv.get('model_load_delay', '') }}"
                            class="form-control form-control-sm" min="0" max="300" step="1" placeholder="auto">
+                  </td>
+                  <td>
+                    <div class="d-flex align-items-center gap-1">
+                      <input type="number" name="srv_rate_limit_requests_{{ loop.index0 }}"
+                             value="{{ srv.get('rate_limit_requests', '') }}"
+                             class="form-control form-control-sm" min="0" step="1" placeholder="∞" style="width:52px" title="Anzahl Requests">
+                      <span class="text-muted small">/</span>
+                      <input type="number" name="srv_rate_limit_period_amount_{{ loop.index0 }}"
+                             value="{{ srv.get('rate_limit_period_amount', 1) }}"
+                             class="form-control form-control-sm" min="1" step="1" style="width:44px" title="Anzahl Einheit">
+                      <select name="srv_rate_limit_period_unit_{{ loop.index0 }}" class="form-select form-select-sm" style="width:80px" title="Einheit">
+                        <option value="second" {% if srv.get('rate_limit_period_unit','second')=='second' %}selected{% endif %}>sec</option>
+                        <option value="minute" {% if srv.get('rate_limit_period_unit')=='minute' %}selected{% endif %}>min</option>
+                        <option value="hour"   {% if srv.get('rate_limit_period_unit')=='hour' %}selected{% endif %}>h</option>
+                      </select>
+                    </div>
                   </td>
                   <td>
                     <select name="srv_api_type_{{ loop.index0 }}" class="form-select form-select-sm">
@@ -861,7 +878,7 @@ function escHtml(str) {
 
 // ─── Inference-Server Editor ─────────────────────────────────────────────────
 
-function buildServerRow(idx, name, url, gpuCount, vramGb, apiType, token, timeout, costFactor, enabled, loadDelay) {
+function buildServerRow(idx, name, url, gpuCount, vramGb, apiType, token, timeout, costFactor, enabled, loadDelay, rlRequests, rlAmount, rlUnit) {
   const apiLabels = {ollama:'Ollama', openai:'OpenAI', anthropic:'Anthropic Messages API'};
   const apiOpts = ['ollama','openai','anthropic'].map(t =>
     `<option value="${t}" ${t===(apiType||'ollama')?'selected':''}>${apiLabels[t]}</option>`
@@ -883,6 +900,18 @@ function buildServerRow(idx, name, url, gpuCount, vramGb, apiType, token, timeou
                class="form-control form-control-sm" min="1" placeholder="global"></td>
      <td><input type="number" name="srv_load_delay_${idx}" value="${loadDelay||''}"
                class="form-control form-control-sm" min="0" max="300" step="1" placeholder="auto"></td>
+     <td><div class="d-flex align-items-center gap-1">
+       <input type="number" name="srv_rate_limit_requests_${idx}" value="${rlRequests||''}"
+               class="form-control form-control-sm" min="0" step="1" placeholder="&infin;" style="width:52px" title="Anzahl Requests">
+       <span class="text-muted small">/</span>
+       <input type="number" name="srv_rate_limit_period_amount_${idx}" value="${rlAmount||1}"
+               class="form-control form-control-sm" min="1" step="1" style="width:44px" title="Anzahl Einheit">
+       <select name="srv_rate_limit_period_unit_${idx}" class="form-select form-select-sm" style="width:80px" title="Einheit">
+         <option value="second" ${(rlUnit||'second')==='second'?'selected':''}>sec</option>
+         <option value="minute" ${rlUnit==='minute'?'selected':''}>min</option>
+         <option value="hour" ${rlUnit==='hour'?'selected':''}>h</option>
+       </select>
+     </div></td>
      <td><select name="srv_api_type_${idx}" class="form-select form-select-sm">${apiOpts}</select></td>
      <td><input type="password" name="srv_token_${idx}"
                class="form-control form-control-sm font-monospace"
@@ -929,10 +958,13 @@ function reindexServerRows() {
     if (inputs[4]) inputs[4].name = `srv_cost_factor_${i}`;
     if (inputs[5]) inputs[5].name = `srv_timeout_${i}`;
     if (inputs[6]) inputs[6].name = `srv_load_delay_${i}`;
-    if (inputs[7]) inputs[7].name = `srv_token_${i}`;
-    if (inputs[8]) inputs[8].name = `srv_enabled_${i}`;
-    if (inputs[9]) inputs[9].name = `srv_ontology_enabled_${i}`;
-    if (selects[0]) selects[0].name = `srv_api_type_${i}`;
+    if (inputs[7]) inputs[7].name = `srv_rate_limit_requests_${i}`;
+    if (inputs[8]) inputs[8].name = `srv_rate_limit_period_amount_${i}`;
+    if (inputs[9]) inputs[9].name = `srv_token_${i}`;
+    if (inputs[10]) inputs[10].name = `srv_enabled_${i}`;
+    if (inputs[11]) inputs[11].name = `srv_ontology_enabled_${i}`;
+    if (selects[0]) selects[0].name = `srv_rate_limit_period_unit_${i}`;
+    if (selects[1]) selects[1].name = `srv_api_type_${i}`;
   });
 }
 
