@@ -5444,14 +5444,23 @@ async def api_upload_knowledge_documents(files: list[UploadFile] = File(...)):
 
 
 @app.post("/api/knowledge/documents/trigger-cron", dependencies=[Depends(require_login)])
-async def api_trigger_cron_ingestion(background_tasks: BackgroundTasks):
-    """Trigger immediate execution of the cron knowledge ingestion worker."""
-    def _run_worker():
-        cmd = [sys.executable, "/app/scripts/cron_knowledge_ingestion.py"]
-        subprocess.run(cmd, capture_output=True, text=True)
+async def api_trigger_cron_ingestion():
+    """Proxy to the orchestrator's document-ingestion trigger.
 
-    background_tasks.add_task(_run_worker)
-    return {"ok": True, "message": "Cron knowledge ingestion triggered in background"}
+    moe-admin's image never copies scripts/ (only a fixed list of admin_ui
+    files is baked in) and lacks the neo4j/chromadb drivers those scripts
+    need, so running scripts/cron_knowledge_ingestion.py as a local
+    subprocess here always failed with FileNotFoundError — silently, since
+    the previous implementation never checked the subprocess result. The
+    orchestrator has both; delegate to it instead (see routes/admin_knowledge_ingest.py).
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(f"{ORCHESTRATOR_URL}/v1/admin/knowledge/documents/ingest")
+            r.raise_for_status()
+            return r.json()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.delete("/api/knowledge/documents/{filename}", dependencies=[Depends(require_login)])
@@ -7817,14 +7826,43 @@ async def user_api_permitted_models(user_id: str = Depends(require_user_login)):
     """
     perms = await db.get_permissions_map(user_id)
     servers = _get_permitted_servers_for_user(perms)
+    ep_entries = perms.get("model_endpoint", [])
+    has_global_wildcard = "*" in ep_entries
+    # Per-server: only models the admin actually granted are visible. A "*@node"
+    # (or the global "*") entry is the one case where every live model on that
+    # node should show; anything else must be matched by exact model name —
+    # otherwise a model added to the node *after* the grant was made would be
+    # silently visible to a user who was only ever given a curated subset
+    # (enforcement in services/pipeline/chat.py already checks this correctly;
+    # this listing endpoint didn't, and leaked every live model on any server
+    # the user had even one specific grant on).
+    specific_by_server: dict[str, set[str]] = {}
+    wildcard_servers: set[str] = set()
+    for ep in ep_entries:
+        model_n, _, node = ep.partition("@")
+        if not node:
+            continue
+        if model_n == "*":
+            wildcard_servers.add(node)
+        elif model_n:
+            specific_by_server.setdefault(node, set()).add(model_n)
+
     results: set[str] = set()
     for srv in servers:
+        sname = srv["name"]
         models = await _fetch_server_models(srv)
-        for m in models:
-            results.add(f"{m['name']}@{srv['name']}")
-    # Fallback: directly include explicitly granted model@server permissions
-    # *@node wildcards are skipped here (resolved above via live fetch)
-    for ep in perms.get("model_endpoint", []):
+        if has_global_wildcard or sname in wildcard_servers:
+            for m in models:
+                results.add(f"{m['name']}@{sname}")
+        else:
+            allowed = specific_by_server.get(sname, set())
+            for m in models:
+                if m["name"] in allowed:
+                    results.add(f"{m['name']}@{sname}")
+    # Also include explicitly granted model@server permissions directly, even
+    # if the model isn't currently live on the server (e.g. not pulled/loaded
+    # right now) — *@node wildcards are already resolved above via live fetch.
+    for ep in ep_entries:
         if "@" in ep:
             m, _, _ = ep.partition("@")
             if m and m != "*":

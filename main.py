@@ -1326,6 +1326,7 @@ from routes.admin_ontology   import router as _admin_onto_router
 from routes.admin_rlsf       import router as _admin_rlsf_router
 from routes.admin_stats      import router as _admin_stats_router
 from routes.admin_backup     import router as _admin_backup_router
+from routes.admin_knowledge_ingest import router as _admin_knowledge_ingest_router
 from routes.feedback         import router as _feedback_router
 from routes.ollama_compat    import router as _ollama_router
 from routes.models           import router as _models_router
@@ -1345,6 +1346,7 @@ app.include_router(_admin_onto_router)
 app.include_router(_admin_rlsf_router)
 app.include_router(_admin_stats_router)
 app.include_router(_admin_backup_router)
+app.include_router(_admin_knowledge_ingest_router)
 app.include_router(_feedback_router)
 app.include_router(_ollama_router)
 app.include_router(_models_router)
