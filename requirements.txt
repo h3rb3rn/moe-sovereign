@@ -43,7 +43,7 @@ PyJWT>=2.13.0
 cryptography>=50.0.0
 
 # --- PDF generation & parsing ---
-weasyprint>=62.0
+weasyprint>=70.0
 pypdf>=6.16.2
 
 # --- System Constitution enforcement ---
