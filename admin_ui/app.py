@@ -32,6 +32,7 @@ from deliberation_policy import (
     legacy_deliberation_policy as _legacy_deliberation_policy,
     validate_deliberation_policy as _validate_deliberation_policy,
 )
+from backup_retention import enforce_backup_retention
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -450,6 +451,8 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_daily_conversation_log_cleanup_loop())
     # Periodic GPU VRAM history sampling (per-instance cumulative usage over time)
     asyncio.create_task(_gpu_history_poll_loop())
+    # Autobackup: Postgres + GraphRAG/ChromaDB/Valkey on a configurable interval
+    asyncio.create_task(_system_backup_loop())
     yield
 
 async def _daily_conversation_log_cleanup_loop() -> None:
@@ -3948,8 +3951,9 @@ async def api_template_refs_cleanup(request: Request):
 _CLEANUP_CONFIG_PATH  = Path("/app/cleanup-config.json")
 _CLEANUP_HISTORY_PATH = Path("/app/cleanup-history.jsonl")
 _CHECKPOINT_ARCHIVE_DIR = Path("/app/checkpoint-archives")
+_BACKUP_DIR = Path("/app/backups")
 
-_KNOWN_JOBS = {"docker_prune", "checkpoint_archive", "rlsf_local_loop"}
+_KNOWN_JOBS = {"docker_prune", "checkpoint_archive", "rlsf_local_loop", "system_backup"}
 
 def _cleanup_paths() -> tuple[Path, Path]:
     return _CLEANUP_CONFIG_PATH, _CLEANUP_HISTORY_PATH
@@ -4027,7 +4031,7 @@ async def api_cleanup_config_save(request: Request):
     body = await request.json()
 
     # Validate: only known top-level keys allowed
-    KNOWN = {"docker_prune", "checkpoint_archive", "admin_logs", "journal", "prometheus", "rlsf_local_loop"}
+    KNOWN = {"docker_prune", "checkpoint_archive", "admin_logs", "journal", "prometheus", "rlsf_local_loop", "system_backup"}
     unknown = set(body.keys()) - KNOWN
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown keys: {unknown}")
@@ -4210,6 +4214,137 @@ def _run_rlsf_local_loop() -> None:
         logger.error("Failed to trigger rlsf_local_loop on orchestrator: %s", exc)
 
 
+def _run_system_backup() -> None:
+    """Combined Autobackup job: pg_dump (this container has psql/pg_dump) plus
+    a delegated GraphRAG/ChromaDB/Valkey export on the orchestrator (which has
+    those drivers), then retention enforcement across the shared backups dir.
+
+    Splitting Postgres out this way exists because of a real incident: the
+    Neo4j knowledge graph had no backup at all, and a host reboot mid-write
+    corrupted its store beyond automatic recovery (2026-09-10).
+    """
+    import time
+    import datetime
+    import subprocess
+
+    start = time.time()
+    ts_iso = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts_file = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    cfg = _read_cleanup_config().get("system_backup", {})
+    retain_days = float(cfg.get("retain_days", 30))
+    max_size_mb = float(cfg.get("max_size_mb", 5000))
+
+    _BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    warnings: list[str] = []
+
+    # 1. PostgreSQL — this container has pg_dump/psql; the orchestrator doesn't.
+    pg_bytes = 0
+    userdb_url = os.environ.get("MOE_USERDB_URL", "")
+    if userdb_url:
+        pg_archive = _BACKUP_DIR / f"postgres-{ts_file}.dump"
+        try:
+            result = subprocess.run(
+                ["pg_dump", "--format=custom", "-Z9", userdb_url],
+                capture_output=True, timeout=600,
+            )
+            if result.returncode == 0 and result.stdout:
+                pg_archive.write_bytes(result.stdout)
+                pg_bytes = pg_archive.stat().st_size
+            else:
+                warnings.append(f"pg_dump failed: {result.stderr.decode(errors='replace')[:300]}")
+        except Exception as exc:
+            warnings.append(f"pg_dump error: {exc}")
+    else:
+        warnings.append("MOE_USERDB_URL not set, skipped Postgres dump")
+
+    # 2. Neo4j / ChromaDB / Valkey — delegated to the orchestrator, which has those drivers.
+    bundle_bytes = 0
+    bundle_filename = f"knowledge-bundle-{ts_file}.tar.gz"
+    try:
+        r = httpx.post(
+            f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/backup/run",
+            json={"filename": bundle_filename},
+            timeout=600.0,
+        )
+        r.raise_for_status()
+        data = r.json()
+        bundle_bytes = data.get("size_bytes", 0)
+        for w in data.get("warnings", []):
+            warnings.append(f"orchestrator: {w}")
+    except Exception as exc:
+        warnings.append(f"knowledge-bundle export failed: {exc}")
+
+    # 3. Retention enforcement across the whole shared backups directory.
+    retention = enforce_backup_retention(_BACKUP_DIR, retain_days, max_size_mb)
+
+    _write_cleanup_record({
+        "job": "system_backup",
+        "ts": ts_iso,
+        "duration_s": int(time.time() - start),
+        "freed_bytes": retention["freed_bytes"],
+        "details": {
+            "postgres_bytes": pg_bytes,
+            "knowledge_bundle_bytes": bundle_bytes,
+            "total_backups": retention["total_backups"],
+            "total_size_bytes": retention["total_size_bytes"],
+            "deleted_by_age": retention["deleted_by_age"],
+            "deleted_by_size_cap": retention["deleted_by_size_cap"],
+            "warnings": "; ".join(warnings) if warnings else "",
+        },
+    })
+
+
+_BACKUP_LOOP_MIN_INTERVAL_H = 0.25  # 15 min floor guards against a misconfigured 0/negative interval
+
+
+async def _system_backup_loop() -> None:
+    """Runs the Autobackup job on a configurable interval, re-reading the
+    config each cycle so a change in the Admin UI takes effect without a
+    restart (same pattern as _daily_conversation_log_cleanup_loop)."""
+    await asyncio.sleep(120)  # stagger past startup traffic
+    while True:
+        cfg = _read_cleanup_config().get("system_backup", {})
+        try:
+            interval_h = float(cfg.get("interval_hours", 24) or 24)
+        except (TypeError, ValueError):
+            interval_h = 24.0
+        interval_h = max(interval_h, _BACKUP_LOOP_MIN_INTERVAL_H)
+        if cfg.get("enabled", True):
+            try:
+                await asyncio.to_thread(_run_system_backup)
+            except Exception as exc:
+                logger.error("Scheduled system_backup failed: %s", exc)
+        await asyncio.sleep(interval_h * 3600)
+
+
+@app.get("/api/backups", dependencies=[Depends(require_login)])
+async def api_backups_list():
+    """Lists individual backup files (from both the Postgres dump and the
+    orchestrator-side knowledge bundle) so the Admin UI can show what the
+    Autobackup job has produced and let an operator delete one manually."""
+    if not _BACKUP_DIR.exists():
+        return {"backups": [], "total_size_bytes": 0}
+    files = [f for f in _BACKUP_DIR.glob("*") if f.is_file() and not f.name.startswith(".")]
+    files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    items = [{
+        "filename": f.name,
+        "size_bytes": f.stat().st_size,
+        "mtime": datetime.utcfromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    } for f in files]
+    return {"backups": items, "total_size_bytes": sum(i["size_bytes"] for i in items)}
+
+
+@app.delete("/api/backups/{filename}", dependencies=[Depends(require_login)])
+async def api_backups_delete(filename: str):
+    if filename != Path(filename).name:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    target = _BACKUP_DIR / filename
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Backup not found")
+    target.unlink()
+    return {"ok": True}
+
+
 @app.post("/api/cleanup/run/{job}", dependencies=[Depends(require_login)])
 async def api_cleanup_run(job: str, background_tasks: BackgroundTasks):
     """Triggers a cleanup job immediately in the background."""
@@ -4222,6 +4357,8 @@ async def api_cleanup_run(job: str, background_tasks: BackgroundTasks):
         background_tasks.add_task(_run_checkpoint_archive)
     elif job == "rlsf_local_loop":
         background_tasks.add_task(_run_rlsf_local_loop)
+    elif job == "system_backup":
+        background_tasks.add_task(_run_system_backup)
 
     return {"ok": True, "job": job, "message": "Job started — check History for status updates"}
 
