@@ -1615,7 +1615,7 @@ async def _stream_native_llm(
                 payload["tools"] = request.tools
         else:
             # ── OpenAI / Ollama-compat path ─────────────────────────────────────
-            url = endpoint["url"].rstrip("/") + "/chat/completions"
+            url = endpoint["url"].rstrip("/").removesuffix("/v1") + "/v1/chat/completions"
             # Build messages with proper tool-call fields
             _oa_msgs = []
             for _oam in request.messages:

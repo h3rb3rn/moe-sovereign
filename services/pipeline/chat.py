@@ -816,7 +816,7 @@ async def _handle_tool_calls(
                     {"role": "system", "content": _sys},
                     {"role": "user", "content": _task_content},
                 ]
-                _content_endpoint = content_url.rstrip("/") + "/chat/completions"
+                _content_endpoint = content_url.rstrip("/").removesuffix("/v1") + "/v1/chat/completions"
                 if request.temperature is not None:
                     _content_extra = {"temperature": request.temperature}
                 else:
@@ -942,7 +942,7 @@ async def _handle_tool_calls(
             _ollama_base = _ollama_base[:-3]
         _tool_endpoint = _ollama_base + "/api/chat"
     else:
-        _tool_endpoint = tool_base_url.rstrip("/") + "/chat/completions"
+        _tool_endpoint = tool_base_url.rstrip("/").removesuffix("/v1") + "/v1/chat/completions"
 
     payload: dict = {
         "model":      tool_model,
@@ -2516,7 +2516,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 **_non_stream_extra,
             }
             _native_oai_url = (
-                _native_endpoint["url"].rstrip("/") + "/chat/completions"
+                _native_endpoint["url"].rstrip("/").removesuffix("/v1") + "/v1/chat/completions"
             )
             _native_audit = _audit_create(
                 session_id or "",

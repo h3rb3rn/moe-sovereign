@@ -2056,6 +2056,7 @@ fi
   [[ "$INSTALL_CADDY"     == "true" ]] && _env_profiles+=(caddy)
   [[ "$INSTALL_AUTHENTIK" == "true" ]] && _env_profiles+=(authentik)
   [[ "${INSTALL_OLLAMA:-false}" == "true" ]] && _env_profiles+=(ollama)
+  [[ "${INSTALL_MONITORING:-true}" == "true" ]] && _env_profiles+=(monitoring)
   printf 'COMPOSE_PROFILES=%s\n' "$(IFS=,; echo "${_env_profiles[*]}")"
   printf 'INSTALL_CODEX=%s\n' "${INSTALL_CODEX:-false}"
   printf 'INSTALL_OLLAMA=%s\n' "${INSTALL_OLLAMA:-false}"
