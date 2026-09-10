@@ -277,6 +277,7 @@ services:
       - ./models:/app/models:ro
       - ${MOE_DATA_ROOT}/cleanup-config.json:/app/cleanup-config.json:ro
       - ${MOE_DATA_ROOT}/cleanup-history.jsonl:/app/cleanup-history.jsonl:rw
+      - ${MOE_DATA_ROOT}/backups/auto:/app/backups:rw
     depends_on:
       terra_cache:
         condition: service_started
@@ -577,6 +578,7 @@ services:
       - ${MOE_DATA_ROOT}/cleanup-config.json:/app/cleanup-config.json:rw
       - ${MOE_DATA_ROOT}/cleanup-history.jsonl:/app/cleanup-history.jsonl:rw
       - ${MOE_DATA_ROOT}/checkpoint-archives:/app/checkpoint-archives:rw
+      - ${MOE_DATA_ROOT}/backups/auto:/app/backups:rw
     depends_on:
       langgraph-app:
         condition: service_started

@@ -212,24 +212,41 @@ def ingest_into_neo4j(records: List[Dict[str, Any]], uri: str, user: str, passwo
 def main():
     parser = argparse.ArgumentParser(description="Batch Knowledge & Wikimedia Ingestion Tool")
     parser.add_argument("--corpora-dir", default="data/corpora", help="Directory containing corpora files")
+    parser.add_argument("--file", default=None,
+                         help="Ingest a single corpus file instead of scanning --corpora-dir "
+                              "(used by scripts/cron_knowledge_ingestion.py for uploaded documents)")
     parser.add_argument("--batch-size", type=int, default=100, help="Batch size for database upserts")
     parser.add_argument("--limit-per-file", type=int, default=0, help="Limit records per file (0 = no limit)")
     parser.add_argument("--dry-run", action="store_true", help="Parse files without writing to DBs")
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent
-    corpora_path = Path(args.corpora_dir)
-    if not corpora_path.is_absolute():
-        corpora_path = repo_root / corpora_path
 
-    if not corpora_path.exists():
-        logger.error("Corpora directory not found: %s", corpora_path)
-        sys.exit(1)
+    if args.file:
+        single_file = Path(args.file)
+        if not single_file.is_absolute():
+            single_file = repo_root / single_file
+        if not single_file.exists():
+            logger.error("File not found: %s", single_file)
+            sys.exit(1)
+        if single_file.suffix.lower() not in (".jsonl", ".json", ".md", ".txt"):
+            logger.error("Unsupported file type for --file: %s", single_file.suffix)
+            sys.exit(1)
+        files = [single_file]
+        corpora_path = single_file.parent
+    else:
+        corpora_path = Path(args.corpora_dir)
+        if not corpora_path.is_absolute():
+            corpora_path = repo_root / corpora_path
 
-    files = sorted([f for f in corpora_path.glob("*") if f.suffix.lower() in (".jsonl", ".json", ".md", ".txt")])
-    if not files:
-        logger.info("No corpora files found in %s", corpora_path)
-        sys.exit(0)
+        if not corpora_path.exists():
+            logger.error("Corpora directory not found: %s", corpora_path)
+            sys.exit(1)
+
+        files = sorted([f for f in corpora_path.glob("*") if f.suffix.lower() in (".jsonl", ".json", ".md", ".txt")])
+        if not files:
+            logger.info("No corpora files found in %s", corpora_path)
+            sys.exit(0)
 
     neo4j_uri, neo4j_user, neo4j_pass = _get_neo4j_credentials()
     chroma_host, chroma_port = _get_chroma_config()
