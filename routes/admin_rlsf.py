@@ -2,12 +2,13 @@
 
 Exposes trigger endpoint so that the Admin UI can launch evaluations.
 """
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from services.auth import require_admin_or_system
 from services.rlsf_local_loop import run_rlsf_loop, is_enabled
 
 router = APIRouter()
 
-@router.post("/v1/admin/rlsf/trigger")
+@router.post("/v1/admin/rlsf/trigger", dependencies=[Depends(require_admin_or_system)])
 async def trigger_rlsf_loop(background_tasks: BackgroundTasks, body: dict = None):
     """Trigger the RLSF Closed Loop evaluation in the background."""
     if not is_enabled():

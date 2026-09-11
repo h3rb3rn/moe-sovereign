@@ -3819,9 +3819,11 @@ async def api_maintenance_ontology_status():
 async def api_maintenance_ontology_clear():
     """Proxy: delete failed/stale healer run entry from Redis."""
     try:
+        _headers = {"Authorization": f"Bearer {os.environ.get('SYSTEM_API_KEY', '')}"}
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.delete(
                 f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/ontology/status",
+                headers=_headers,
             )
             return r.json()
     except Exception as e:
@@ -3836,10 +3838,12 @@ async def api_dedicated_healer_start(request: Request):
     except Exception:
         body = {}
     try:
+        _headers = {"Authorization": f"Bearer {os.environ.get('SYSTEM_API_KEY', '')}"}
         async with httpx.AsyncClient(timeout=15.0) as client:
             r = await client.post(
                 f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/ontology/dedicated/start",
                 json=body,
+                headers=_headers,
             )
             return r.json()
     except Exception as e:
@@ -3850,9 +3854,11 @@ async def api_dedicated_healer_start(request: Request):
 async def api_dedicated_healer_stop():
     """Proxy: stop the dedicated gap-healer loop."""
     try:
+        _headers = {"Authorization": f"Bearer {os.environ.get('SYSTEM_API_KEY', '')}"}
         async with httpx.AsyncClient(timeout=15.0) as client:
             r = await client.post(
                 f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/ontology/dedicated/stop",
+                headers=_headers,
             )
             return r.json()
     except Exception as e:
@@ -3863,9 +3869,11 @@ async def api_dedicated_healer_stop():
 async def api_dedicated_healer_status():
     """Proxy: return current state of the dedicated healer loop."""
     try:
+        _headers = {"Authorization": f"Bearer {os.environ.get('SYSTEM_API_KEY', '')}"}
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(
                 f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/ontology/dedicated/status",
+                headers=_headers,
             )
             return r.json()
     except Exception as e:
@@ -3876,9 +3884,11 @@ async def api_dedicated_healer_status():
 async def api_dedicated_healer_verify():
     """Proxy: verify that the dedicated healer PID is alive and has an active request."""
     try:
+        _headers = {"Authorization": f"Bearer {os.environ.get('SYSTEM_API_KEY', '')}"}
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(
                 f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/ontology/dedicated/verify",
+                headers=_headers,
             )
             return r.json()
     except Exception as e:
@@ -4207,6 +4217,7 @@ def _run_rlsf_local_loop() -> None:
         r = httpx.post(
             f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/rlsf/trigger",
             json={"batch_size": batch_size},
+            headers={"Authorization": f"Bearer {os.environ.get('SYSTEM_API_KEY', '')}"},
             timeout=15.0
         )
         r.raise_for_status()
@@ -4264,6 +4275,7 @@ def _run_system_backup() -> None:
         r = httpx.post(
             f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/backup/run",
             json={"filename": bundle_filename},
+            headers={"Authorization": f"Bearer {os.environ.get('SYSTEM_API_KEY', '')}"},
             timeout=600.0,
         )
         r.raise_for_status()
@@ -5455,8 +5467,9 @@ async def api_trigger_cron_ingestion():
     orchestrator has both; delegate to it instead (see routes/admin_knowledge_ingest.py).
     """
     try:
+        _headers = {"Authorization": f"Bearer {os.environ.get('SYSTEM_API_KEY', '')}"}
         async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.post(f"{ORCHESTRATOR_URL}/v1/admin/knowledge/documents/ingest")
+            r = await client.post(f"{ORCHESTRATOR_URL}/v1/admin/knowledge/documents/ingest", headers=_headers)
             r.raise_for_status()
             return r.json()
     except Exception as e:

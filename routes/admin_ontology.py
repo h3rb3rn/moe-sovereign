@@ -12,9 +12,10 @@ import signal
 import time
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 import state
+from services.auth import require_admin_or_system
 from services.healer import (
     _DEDICATED_HEALER_KEY,
     _BLOCKED_SERVERS_KEY,
@@ -25,7 +26,7 @@ from services.healer import (
     _clear_orphaned_node_slots,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin_or_system)])
 
 from services.healer import _ONTOLOGY_RUN_KEY, _run_healer_task
 

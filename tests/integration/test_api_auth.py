@@ -99,3 +99,102 @@ async def test_returns_none_on_pool_exception(monkeypatch):
     result = await _db_fallback_key_lookup("any_hash")
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# require_admin_or_system — internal /v1/admin/* route dependency
+#
+# Added after the 2026-09-11 review found these routes (backup, knowledge
+# ingestion, RLSF trigger, ontology healer control) had no auth at all,
+# reachable by anything that can reach the core container's published port.
+# ---------------------------------------------------------------------------
+
+def _fake_request(headers: dict):
+    req = MagicMock()
+    req.headers = headers
+    return req
+
+
+class _FakeHTTPException(Exception):
+    """Real exception class standing in for fastapi.HTTPException.
+
+    conftest.py stubs the whole `fastapi` module with a MagicMock so the
+    suite can collect without the package installed; a MagicMock class
+    cannot be `raise`d or matched by pytest.raises. Patching
+    services.auth.HTTPException to this for the duration of a test keeps
+    that global stub intact for everything else.
+    """
+    def __init__(self, status_code: int, detail=None):
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(detail)
+
+
+@pytest.mark.asyncio
+async def test_require_admin_rejects_missing_key(monkeypatch):
+    from services.auth import require_admin_or_system
+    monkeypatch.setattr("services.auth.HTTPException", _FakeHTTPException)
+
+    with pytest.raises(_FakeHTTPException) as exc:
+        await require_admin_or_system(_fake_request({}))
+    assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_require_admin_accepts_system_key(monkeypatch):
+    monkeypatch.setenv("SYSTEM_API_KEY", "moe-sk-the-system-key")
+    from services.auth import require_admin_or_system
+
+    result = await require_admin_or_system(
+        _fake_request({"x-api-key": "moe-sk-the-system-key"})
+    )
+    assert result["is_admin"] is True
+    assert result["auth_via"] == "system_key"
+
+
+@pytest.mark.asyncio
+async def test_require_admin_rejects_invalid_key(monkeypatch):
+    from services.auth import require_admin_or_system
+    monkeypatch.setattr("services.auth.HTTPException", _FakeHTTPException)
+
+    monkeypatch.setenv("SYSTEM_API_KEY", "moe-sk-the-system-key")
+    monkeypatch.setattr("state._userdb_pool", None)
+    monkeypatch.setattr("state.redis_client", None)
+
+    with pytest.raises(_FakeHTTPException) as exc:
+        await require_admin_or_system(
+            _fake_request({"x-api-key": "moe-sk-not-the-system-key"})
+        )
+    assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_require_admin_rejects_valid_non_admin_key(monkeypatch):
+    from services.auth import require_admin_or_system
+    monkeypatch.setattr("services.auth.HTTPException", _FakeHTTPException)
+
+    monkeypatch.setenv("SYSTEM_API_KEY", "moe-sk-the-system-key")
+    with patch(
+        "services.auth._validate_api_key",
+        new=AsyncMock(return_value={"user_id": "u-1", "is_active": "1"}),
+    ):
+        with pytest.raises(_FakeHTTPException) as exc:
+            await require_admin_or_system(
+                _fake_request({"x-api-key": "moe-sk-a-regular-user-key"})
+            )
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_require_admin_accepts_key_with_is_admin_flag(monkeypatch):
+    from services.auth import require_admin_or_system
+
+    monkeypatch.setenv("SYSTEM_API_KEY", "moe-sk-the-system-key")
+    with patch(
+        "services.auth._validate_api_key",
+        new=AsyncMock(return_value={"user_id": "u-2", "is_admin": True}),
+    ):
+        result = await require_admin_or_system(
+            _fake_request({"x-api-key": "moe-sk-an-admin-users-key"})
+        )
+    assert result["user_id"] == "u-2"

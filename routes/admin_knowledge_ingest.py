@@ -9,7 +9,9 @@ or logged). This container has scripts/ and the neo4j/chromadb drivers it
 needs, so the Admin UI now delegates here instead, the same way it already
 delegates the Autobackup GraphRAG/ChromaDB export (routes/admin_backup.py).
 """
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends
+
+from services.auth import require_admin_or_system
 
 router = APIRouter()
 
@@ -19,7 +21,7 @@ def _run_cron_cycle() -> None:
     run_cron_cycle()
 
 
-@router.post("/v1/admin/knowledge/documents/ingest")
+@router.post("/v1/admin/knowledge/documents/ingest", dependencies=[Depends(require_admin_or_system)])
 async def trigger_document_ingestion(background_tasks: BackgroundTasks):
     """Runs one cron-ingestion cycle over UPLOADS_DIR in the background."""
     background_tasks.add_task(_run_cron_cycle)
