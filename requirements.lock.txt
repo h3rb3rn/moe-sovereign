@@ -142,7 +142,7 @@ uuid_utils==0.17.0
 uvicorn==0.51.0
 uvloop==0.22.1
 watchfiles==1.2.0
-weasyprint==69.0
+weasyprint==70.0
 webencodings==0.5.1
 websocket-client==1.9.0
 websockets==15.0.1
