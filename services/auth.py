@@ -12,12 +12,13 @@ it is purely auth-scoped and does not belong in state.py.
 import hashlib
 import json
 import logging
+import os
 import threading
 import time
 from typing import Optional
 
 import httpx
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 import state
 from config import OIDC_ENABLED, OIDC_JWKS_URL, OIDC_CLIENT_ID, OIDC_ISSUER
@@ -300,6 +301,36 @@ def _extract_api_key(request: Request) -> Optional[str]:
             )
         return token
     return None
+
+
+async def require_admin_or_system(raw_request: Request) -> dict:
+    """FastAPI dependency for internal /v1/admin/* routes.
+
+    These are administrative operations (backup, ontology healer control,
+    RLSF trigger, document ingestion) meant to be called only by moe-admin,
+    never by an end-user client. The core container publishes its port on
+    all interfaces, so relying on network placement alone is not sufficient —
+    see the 2026-09-11 review report. Requires either SYSTEM_API_KEY or a
+    user API key whose account has is_admin set.
+
+    Note: is_admin is not currently populated on the Redis-cache or DB-fallback
+    user context (see admin_ui/database.py::sync_user_to_redis and
+    services/auth.py::_db_fallback_key_lookup), so in practice only
+    SYSTEM_API_KEY authenticates today. The is_admin branch is kept so a
+    future fix to populate it works here without touching call sites.
+    """
+    raw_key = _extract_api_key(raw_request)
+    if not raw_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    sys_key = os.environ.get("SYSTEM_API_KEY", "").strip()
+    if sys_key and raw_key == sys_key:
+        return {"is_admin": True, "auth_via": "system_key"}
+    user_ctx = await _validate_api_key(raw_key)
+    if "error" in user_ctx:
+        raise HTTPException(status_code=401, detail=user_ctx["error"])
+    if not user_ctx.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user_ctx
 
 
 def _extract_session_id(request: Request) -> Optional[str]:

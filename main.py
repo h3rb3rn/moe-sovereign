@@ -1894,8 +1894,6 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
     current_chat_id.set(chat_id)
     _deregistered = False
     config   = {"configurable": {"thread_id": str(uuid.uuid4())}}
-    from services.langfuse_client import with_langfuse_callbacks
-    config   = with_langfuse_callbacks(config)
     created  = int(time.time())
     _t_start = time.monotonic()
 

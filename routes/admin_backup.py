@@ -19,17 +19,18 @@ import tarfile
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 import config
 from graph_rag import GraphRAGManager
+from services.auth import require_admin_or_system
 
 router = APIRouter()
 
 _BACKUP_DIR = Path("/app/backups")
 
 
-@router.post("/v1/admin/backup/run")
+@router.post("/v1/admin/backup/run", dependencies=[Depends(require_admin_or_system)])
 async def run_backup(body: dict = None):
     """Exports the GraphRAG knowledge graph, ChromaDB semantic cache and
     Valkey routing-feedback state into one archive under the shared backups
