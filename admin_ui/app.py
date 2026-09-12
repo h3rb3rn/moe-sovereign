@@ -4249,24 +4249,31 @@ def _run_system_backup() -> None:
     warnings: list[str] = []
 
     # 1. PostgreSQL — this container has pg_dump/psql; the orchestrator doesn't.
-    pg_bytes = 0
-    userdb_url = os.environ.get("MOE_USERDB_URL", "")
-    if userdb_url:
-        pg_archive = _BACKUP_DIR / f"postgres-{ts_file}.dump"
+    # Both databases: moe_userdb (users/permissions/templates/connections) and
+    # the separate LangGraph checkpoint database — the original version only
+    # dumped moe_userdb, silently excluding checkpoint state from every backup
+    # (GAP_REPORT_2026-09-11.md, GAP-03).
+    def _dump_postgres(env_var: str, label: str) -> int:
+        url = os.environ.get(env_var, "")
+        if not url:
+            warnings.append(f"{env_var} not set, skipped {label} dump")
+            return 0
+        archive = _BACKUP_DIR / f"{label}-{ts_file}.dump"
         try:
             result = subprocess.run(
-                ["pg_dump", "--format=custom", "-Z9", userdb_url],
+                ["pg_dump", "--format=custom", "-Z9", url],
                 capture_output=True, timeout=600,
             )
             if result.returncode == 0 and result.stdout:
-                pg_archive.write_bytes(result.stdout)
-                pg_bytes = pg_archive.stat().st_size
-            else:
-                warnings.append(f"pg_dump failed: {result.stderr.decode(errors='replace')[:300]}")
+                archive.write_bytes(result.stdout)
+                return archive.stat().st_size
+            warnings.append(f"pg_dump ({label}) failed: {result.stderr.decode(errors='replace')[:300]}")
         except Exception as exc:
-            warnings.append(f"pg_dump error: {exc}")
-    else:
-        warnings.append("MOE_USERDB_URL not set, skipped Postgres dump")
+            warnings.append(f"pg_dump ({label}) error: {exc}")
+        return 0
+
+    pg_bytes         = _dump_postgres("MOE_USERDB_URL", "postgres")
+    checkpoint_bytes = _dump_postgres("POSTGRES_CHECKPOINT_URL", "postgres-checkpoints")
 
     # 2. Neo4j / ChromaDB / Valkey — delegated to the orchestrator, which has those drivers.
     bundle_bytes = 0
@@ -4296,6 +4303,7 @@ def _run_system_backup() -> None:
         "freed_bytes": retention["freed_bytes"],
         "details": {
             "postgres_bytes": pg_bytes,
+            "postgres_checkpoints_bytes": checkpoint_bytes,
             "knowledge_bundle_bytes": bundle_bytes,
             "total_backups": retention["total_backups"],
             "total_size_bytes": retention["total_size_bytes"],

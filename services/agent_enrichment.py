@@ -851,7 +851,7 @@ async def _agent_cache_lookup_impl(query: str, scope: str, redis_client, collect
 
 async def agent_graph_context(
     query: str, tenant_ids, session_id: str, redis_client, graph_manager,
-    max_chars: int, timeout_s: float,
+    max_chars: int, timeout_s: float, user_id: str = "",
 ) -> str:
     """Fetch (or reuse cached) GraphRAG context for injection into the tool
     model's system prompt.
@@ -875,7 +875,12 @@ async def agent_graph_context(
     tenant_key = ",".join(sorted(tenant_ids or []))
     cache_key = (
         "moe:graph:cc:"
-        + hashlib.sha256(f"{tenant_key}|{query[:200]}".encode()).hexdigest()[:16]
+        # user_id is part of the key (not just tenant_ids) because the cached
+        # value now also carries the caller's episode hint (see _fetch below),
+        # which is scoped per-user — without this, one user's routing-history
+        # hint could be served back to a different user sharing the same
+        # tenant_ids scope on an L2 cache hit.
+        + hashlib.sha256(f"{tenant_key}|{user_id}|{query[:200]}".encode()).hexdigest()[:16]
     )
 
     if redis_client:
@@ -891,7 +896,7 @@ async def agent_graph_context(
         ctx = await graph_manager.query_context(query[:500], ["general"], tenant_ids=tenant_ids) or ""
         try:
             from episodic_memory import get_episode_hint as _get_ep_hint
-            hint = await _get_ep_hint(graph_manager.driver, query[:500], "general")
+            hint = await _get_ep_hint(graph_manager.driver, query[:500], "general", user_id)
             if hint:
                 ctx = (ctx + "\n\n" + hint) if ctx else hint
         except Exception as e:

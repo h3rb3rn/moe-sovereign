@@ -18,6 +18,15 @@ No live network/Redis calls are required: _select_node and _get_expert_score
 are patched to observe/control inputs, and _audited_ainvoke is patched to
 raise so the (irrelevant, network-dependent) tail of the function short-
 circuits via its existing except-and-return-None path.
+
+_refine_expert_response also makes its own real, unmocked httpx call (the
+warm-model /api/ps probe) against the fake node URL before ever reaching
+_audited_ainvoke. It fails fast in practice — the fake hostname doesn't
+resolve — but that's environment-dependent timing, not a guarantee: a DNS
+setup that answers slowly instead of failing fast, or a resolver quirk,
+could stretch it out to its 2s timeout while the test's event loop is
+mid-teardown. httpx.AsyncClient.get is patched too so this test makes no
+real network calls at all, per project test rules.
 """
 
 from unittest.mock import AsyncMock, patch
@@ -56,6 +65,7 @@ async def test_refine_expert_response_prefers_template_endpoint_over_global():
     with patch("config.EXPERTS", global_experts), \
          patch.object(_inference, "_get_expert_score", AsyncMock(return_value=1.0)), \
          patch.object(_inference, "_select_node", AsyncMock(side_effect=_fake_select_node)), \
+         patch("httpx.AsyncClient.get", AsyncMock(side_effect=RuntimeError("no network in unit test"))), \
          patch.object(_inference, "_audited_ainvoke", AsyncMock(side_effect=RuntimeError("no network in unit test"))):
         result = await _inference._refine_expert_response("code_reviewer", "feedback", state)
 
@@ -88,6 +98,7 @@ async def test_refine_expert_response_falls_back_to_global_when_no_template_cate
     with patch("config.EXPERTS", global_experts), \
          patch.object(_inference, "_get_expert_score", AsyncMock(return_value=1.0)), \
          patch.object(_inference, "_select_node", AsyncMock(side_effect=_fake_select_node)), \
+         patch("httpx.AsyncClient.get", AsyncMock(side_effect=RuntimeError("no network in unit test"))), \
          patch.object(_inference, "_audited_ainvoke", AsyncMock(side_effect=RuntimeError("no network in unit test"))):
         result = await _inference._refine_expert_response("code_reviewer", "feedback", state)
 
