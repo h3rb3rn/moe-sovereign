@@ -814,6 +814,7 @@ async def graph_rag_node(state_: AgentState):
                 state.graph_manager.driver,
                 state_["input"],
                 _ep_task_type,
+                state_.get("user_id", ""),
             ),
             state_,
             5.0,

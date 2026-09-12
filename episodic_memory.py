@@ -75,6 +75,7 @@ RETURN ep.hash AS hash
 _QUERY_EPISODES = """
 MATCH (ep:Episode)
 WHERE ep.task_type = $task_type
+  AND ep.user_id = $user_id
   AND ep.confidence >= $min_confidence
   AND ep.expires_at > $now
 WITH ep,
@@ -97,6 +98,7 @@ LIMIT $limit
 _QUERY_EPISODES_FALLBACK = """
 MATCH (ep:Episode)
 WHERE ep.task_type = $task_type
+  AND ep.user_id = $user_id
   AND ep.confidence >= $min_confidence
   AND ep.expires_at > $now
 RETURN
@@ -112,9 +114,17 @@ LIMIT $limit
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _episode_hash(query: str, task_type: str) -> str:
-    """Stable hash for deduplication — same query intent + task type = same episode."""
-    blob = f"{query[:200].lower().strip()}|{task_type}"
+def _episode_hash(query: str, task_type: str, user_id: str) -> str:
+    """Stable hash for deduplication — same user + query intent + task type = same episode.
+
+    user_id is part of the key (not just a stored property) so two different
+    users asking the same question never collide into one shared Episode node:
+    without it, one user's routing history could get its confidence/recall_count
+    bumped by another user's identical-looking query, and retrieval (see
+    _QUERY_EPISODES) had no owner filter at all — any user's episodic routing
+    hints were visible to any other user for a matching task_type/similarity.
+    """
+    blob = f"{query[:200].lower().strip()}|{task_type}|{user_id}"
     return hashlib.sha256(blob.encode()).hexdigest()[:24]
 
 
@@ -200,7 +210,8 @@ async def log_episode(driver, state: dict) -> None:
     plan        = state.get("plan", [])
     task_type   = _extract_task_type(plan)
     query_pat   = _normalise_query(state.get("input", ""))
-    ep_hash     = _episode_hash(query_pat, task_type)
+    user_id     = state.get("user_id", "anon")
+    ep_hash     = _episode_hash(query_pat, task_type, user_id)
     confidence  = _extract_confidence(state)
 
     # Only persist episodes with meaningful quality signal.
@@ -230,7 +241,7 @@ async def log_episode(driver, state: dict) -> None:
                     "confidence":     confidence,
                     "total_tokens":   total_tokens,
                     "expires_at":     expires_at_iso,
-                    "user_id":        state.get("user_id", "anon"),
+                    "user_id":        user_id,
                 },
             )
         logger.debug(
@@ -241,7 +252,7 @@ async def log_episode(driver, state: dict) -> None:
         logger.warning("Episodic memory: log_episode failed: %s", exc)
 
 
-async def get_episode_hint(driver, query: str, task_type: str) -> str:
+async def get_episode_hint(driver, query: str, task_type: str, user_id: str) -> str:
     """Return a formatted hint block from similar past episodes, or "".
 
     Injected into graph_context alongside Neo4j results so the judge model
@@ -251,11 +262,16 @@ async def get_episode_hint(driver, query: str, task_type: str) -> str:
         driver:    Neo4j async driver.
         query:     Current user query.
         task_type: Primary task category from the current plan.
+        user_id:   Owner to scope retrieval to. Episodes are private per-user
+                   by default (see log_episode/_STORE_EPISODE) — sharing
+                   routing history across users needs an explicit policy, not
+                   an unscoped query, so a missing/empty user_id fails closed
+                   (returns "") rather than falling back to a global lookup.
 
     Returns:
         Formatted "[Episode Hint]" string, or "" if no relevant episodes found.
     """
-    if not _ENABLED or driver is None:
+    if not _ENABLED or driver is None or not user_id:
         return ""
 
     query_pat = _normalise_query(query)
@@ -270,6 +286,7 @@ async def get_episode_hint(driver, query: str, task_type: str) -> str:
                     {
                         "task_type":      task_type,
                         "query_pattern":  query_pat,
+                        "user_id":        user_id,
                         "min_confidence": _MIN_CONFIDENCE,
                         "min_sim":        0.4,
                         "now":            now_iso,
@@ -283,6 +300,7 @@ async def get_episode_hint(driver, query: str, task_type: str) -> str:
                     _QUERY_EPISODES_FALLBACK,
                     {
                         "task_type":      task_type,
+                        "user_id":        user_id,
                         "min_confidence": _MIN_CONFIDENCE,
                         "now":            now_iso,
                         "limit":          _MAX_HINTS,

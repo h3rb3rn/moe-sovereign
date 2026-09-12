@@ -2690,6 +2690,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                         _agent_turn.query, _agent_tenant_ids, session_id,
                         state.redis_client, state.graph_manager,
                         max_chars=_agent_max_chars, timeout_s=AGENT_GRAPHRAG_TIMEOUT_S,
+                        user_id=user_id,
                     )
                     await _record_stage(chat_id, "agent_graphrag", "queried" if _agent_system_augment else "queried_empty")
                     logger.info(
