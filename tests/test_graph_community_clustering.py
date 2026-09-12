@@ -1,10 +1,10 @@
-"""Unit tests for the Microsoft GraphRAG-Style Hierarchical Community Clustering Engine."""
+"""Unit tests for the connected-component graph community clustering engine."""
 
 import pytest
 from services.graphrag.graph_clustering import GraphCommunityClusterer
 
 
-def test_compute_leiden_communities():
+def test_compute_connected_component_communities():
     """Verify graph nodes are partitioned into distinct connected community clusters."""
     clusterer = GraphCommunityClusterer()
     nodes = [
@@ -17,7 +17,7 @@ def test_compute_leiden_communities():
         {"source": "a1", "target": "a2"},
         {"source": "b1", "target": "b2"}
     ]
-    clusters = clusterer.compute_leiden_communities(nodes, edges)
+    clusters = clusterer.compute_connected_component_communities(nodes, edges)
     
     assert len(clusters) == 4
     assert clusters["a1"] == clusters["a2"]
