@@ -61,17 +61,31 @@ async def run_backup(body: dict = None):
         except Exception as exc:
             warnings.append(f"graphrag export failed: {exc}")
 
+        # Answer/agent caches, not just the template cache — GAP_REPORT_2026-09-11.md
+        # (GAP-03) found the original export covered only moe_template_cache while
+        # main.py also maintains moe_fact_cache and moe_agent_cache. Conversation
+        # semantic memory (memory_retrieval.py) is deliberately still excluded here:
+        # per AGENTS.md, ChromaDB is a cache/projection, not durable state, and that
+        # collection is large enough and sensitive enough (raw conversation content)
+        # to need its own retention/privacy decision rather than riding along here.
         try:
             import chromadb
             client = chromadb.HttpClient(host=os.getenv("CHROMA_HOST", "chromadb-vector"), port=8000)
-            collection = client.get_collection("moe_template_cache")
-            cache = collection.get(include=["documents", "metadatas"])
-            (tmp_dir / "chroma_cache.json").write_text(json.dumps({
-                "ids": cache["ids"], "documents": cache["documents"], "metadatas": cache["metadatas"],
-            }))
+            for _coll_name in ("moe_template_cache", "moe_fact_cache", "moe_agent_cache"):
+                try:
+                    collection = client.get_collection(_coll_name)
+                    cache = collection.get(include=["documents", "metadatas"])
+                    (tmp_dir / f"chroma_{_coll_name}.json").write_text(json.dumps({
+                        "ids": cache["ids"], "documents": cache["documents"], "metadatas": cache["metadatas"],
+                    }))
+                except Exception as exc:
+                    warnings.append(f"chromadb export of {_coll_name} skipped: {exc}")
         except Exception as exc:
-            warnings.append(f"chromadb export skipped: {exc}")
+            warnings.append(f"chromadb export failed: {exc}")
 
+        # Routing feedback (string keys) and expert performance / Thompson-sampling
+        # counters (moe:perf:* hashes) — the original export only captured the
+        # former, silently dropping the latter (GAP-03).
         try:
             from redis import Redis
             r = Redis.from_url(os.getenv("REDIS_URL", "redis://terra_cache:6379"))
@@ -82,7 +96,18 @@ async def run_backup(body: dict = None):
             }
             (tmp_dir / "valkey_feedback.json").write_text(json.dumps(feedback))
         except Exception as exc:
-            warnings.append(f"valkey export failed: {exc}")
+            warnings.append(f"valkey feedback export failed: {exc}")
+
+        try:
+            from redis import Redis
+            r = Redis.from_url(os.getenv("REDIS_URL", "redis://terra_cache:6379"))
+            perf = {
+                k.decode(): {hk.decode(): hv.decode() for hk, hv in r.hgetall(k).items()}
+                for k in r.keys("moe:perf:*")
+            }
+            (tmp_dir / "valkey_perf.json").write_text(json.dumps(perf))
+        except Exception as exc:
+            warnings.append(f"valkey perf export failed: {exc}")
 
         router_src = Path("models/sovereign_router.onnx")
         if router_src.exists():
