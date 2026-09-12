@@ -173,7 +173,11 @@ async def get_model(model_id: str, raw_request: Request):
 @router.get("/v1/models")
 async def list_models(raw_request: Request):
     raw_key  = _extract_api_key(raw_request)
-    # ── Diagnostic auth log (remove after debugging missing-API-key issue) ──
+    # ── Diagnostic auth log ──────────────────────────────────────────────────
+    # key_id is a truncated SHA-256 of the raw key — safe to log (see the
+    # matching block in services/pipeline/chat.py for the full rationale).
+    # This block previously logged a raw 10-char key prefix, which is partial
+    # key material, not a safe identifier (GAP_REPORT_2026-09-11.md, GAP-11).
     _auth_hdr   = raw_request.headers.get("authorization", "")
     _xapi_hdr   = raw_request.headers.get("x-api-key", "")
     _hdr_source = (
@@ -182,13 +186,13 @@ async def list_models(raw_request: Request):
         "authorization-other"   if _auth_hdr else
         "none"
     )
-    _key_prefix = (raw_key or "")[:10]
+    _key_id     = hashlib.sha256(raw_key.encode()).hexdigest()[:12] if raw_key else "none"
     _key_len    = len(raw_key or "")
     _is_moe_sk  = bool(raw_key and raw_key.startswith("moe-sk-"))
     _origin_ip  = raw_request.client.host if raw_request.client else "?"
     logger.warning(
-        "🔍 models-auth-debug ip=%s hdr_source=%s key_prefix=%r key_len=%d is_moe_sk=%s",
-        _origin_ip, _hdr_source, _key_prefix, _key_len, _is_moe_sk,
+        "🔍 models-auth-debug ip=%s hdr_source=%s key_id=%s key_len=%d is_moe_sk=%s",
+        _origin_ip, _hdr_source, _key_id, _key_len, _is_moe_sk,
     )
     # ── End diagnostic block ───────────────────────────────────────────────
     user_ctx = await _validate_api_key(raw_key) if raw_key else {"error": "missing_key"}

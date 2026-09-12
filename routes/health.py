@@ -70,10 +70,23 @@ async def mcp_invoke(body: _InvokeRequest):
         return JSONResponse({"error": str(exc)}, status_code=503)
 
 
+def _health_payload() -> dict:
+    """Pure helper so this is testable without a real fastapi router — @router.get
+    on a fully-mocked fastapi (see tests/conftest.py) replaces the decorated
+    name with a MagicMock, not the original function.
+
+    revision is the non-secret build identity (Dockerfile ARG GIT_REVISION,
+    "unknown" if the image was built without passing it) — lets an operator
+    correlate a running container back to the exact source commit
+    (GAP_REPORT_2026-09-11.md, GAP-10).
+    """
+    return {"status": "ok", "revision": os.environ.get("GIT_REVISION", "unknown")}
+
+
 @router.get("/health")
 async def health_check():
     """Liveness probe for Docker HEALTHCHECK and load balancers."""
-    return {"status": "ok"}
+    return _health_payload()
 
 
 async def _readiness_checks() -> tuple[dict, bool]:

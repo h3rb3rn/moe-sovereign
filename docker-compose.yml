@@ -200,6 +200,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Set GIT_REVISION=$(git rev-parse HEAD) in the shell before `docker
+      # compose build` to stamp the image with the actual source commit
+      # (exposed at runtime via GET /health). No CI pipeline wires this
+      # automatically yet — omitting it just builds "unknown", same as before.
+      args:
+        GIT_REVISION: ${GIT_REVISION:-unknown}
     container_name: langgraph-orchestrator
     restart: always
     healthcheck:

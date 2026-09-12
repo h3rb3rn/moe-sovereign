@@ -27,12 +27,23 @@ RUN pip install --prefix=/install -r requirements.lock.txt \
 # ---------- Stage 2: runtime ----------
 FROM python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93 AS runtime
 
+# Source commit this image was built from. Passed as a build arg (see
+# docker-compose.yml's `build.args.GIT_REVISION`); defaults to "unknown" for
+# a manual `docker build` that doesn't pass it. Previously the image carried
+# no revision at all, so a running container could not be correlated back to
+# a commit without trusting whatever the deploying operator remembered
+# (GAP_REPORT_2026-09-11.md, GAP-10). Exposed at runtime via GET /health.
+ARG GIT_REVISION=unknown
+
 # OCI image labels (Harbor/Quay scanners and k8s tooling look these up).
 LABEL org.opencontainers.image.title="moe-sovereign-orchestrator" \
       org.opencontainers.image.description="MoE Sovereign FastAPI/LangGraph orchestrator" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.source="https://github.com/moe-sovereign/moe-infra" \
-      org.opencontainers.image.vendor="MoE Sovereign"
+      org.opencontainers.image.vendor="MoE Sovereign" \
+      org.opencontainers.image.revision="$GIT_REVISION"
+
+ENV GIT_REVISION=$GIT_REVISION
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

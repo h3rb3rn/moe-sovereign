@@ -1,5 +1,5 @@
 import pytest
-from services.quality_gate import evaluate_program_sketch, run_dspy_teleprompter_gate
+from services.quality_gate import check_program_sketch_bounds, check_trace_assertion_tiers
 
 def test_sketch_valid_with_bounds():
     sketch_data = {
@@ -9,7 +9,7 @@ def test_sketch_valid_with_bounds():
             'h2': {'type': 'enum', 'enum': ['A', 'B']}
         }
     }
-    result = evaluate_program_sketch(sketch_data)
+    result = check_program_sketch_bounds(sketch_data)
     assert result['sketch_valid'] is True
     assert result['filled_holes']['h1'] == 10
     assert result['filled_holes']['h2'] == 'A'
@@ -22,7 +22,7 @@ def test_sketch_unsat_bounds():
             'h1': {'type': 'int', 'min': 20, 'max': 10}
         }
     }
-    result = evaluate_program_sketch(sketch_data)
+    result = check_program_sketch_bounds(sketch_data)
     assert result['sketch_valid'] is False
     assert result['unsat_core'] == ['h1']
 
@@ -31,7 +31,7 @@ def test_sketch_no_bounds():
         'holes': {'h1': None, 'h2': None},
         'smt_bounds': {}
     }
-    result = evaluate_program_sketch(sketch_data)
+    result = check_program_sketch_bounds(sketch_data)
     assert result['sketch_valid'] is True
     assert result['filled_holes']['h1'] is None
     assert result['filled_holes']['h2'] is None
@@ -42,7 +42,7 @@ def test_trace_passed_all_tiers():
         'canonical_json_hash': 'abc123hash',
         'trust_verdict': 'PROCEED'
     }
-    result = run_dspy_teleprompter_gate(trace)
+    result = check_trace_assertion_tiers(trace)
     assert result['passed'] is True
     assert result['tier_failed'] is None
 
@@ -52,7 +52,7 @@ def test_trace_failed_tier1():
         'canonical_json_hash': 'abc123hash',
         'trust_verdict': 'PROCEED'
     }
-    result = run_dspy_teleprompter_gate(trace)
+    result = check_trace_assertion_tiers(trace)
     assert result['passed'] is False
     assert result['tier_failed'] == 1
 
@@ -62,7 +62,7 @@ def test_trace_failed_tier2():
         'canonical_json_hash': '',
         'trust_verdict': 'PROCEED'
     }
-    result = run_dspy_teleprompter_gate(trace)
+    result = check_trace_assertion_tiers(trace)
     assert result['passed'] is False
     assert result['tier_failed'] == 2
 
@@ -72,6 +72,6 @@ def test_trace_failed_tier3():
         'canonical_json_hash': 'abc123hash',
         'trust_verdict': 'BLOCK'
     }
-    result = run_dspy_teleprompter_gate(trace)
+    result = check_trace_assertion_tiers(trace)
     assert result['passed'] is False
     assert result['tier_failed'] == 3
