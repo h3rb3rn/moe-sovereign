@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""MoE Sovereign Microsoft GraphRAG-Style Hierarchical Community Clustering Module.
+"""MoE Sovereign Graph Community Clustering Module.
 
-Applies community detection algorithms (Leiden / Louvain clustering) over Neo4j knowledge
-graph entities and relationships. Creates higher-level :Community summary nodes for macro-query
-retrieval without traversing hundreds of individual entity nodes.
+Groups Neo4j knowledge graph entities into :Community summary nodes for
+macro-query retrieval without traversing hundreds of individual entity nodes.
+
+Grouping is by connected component (breadth-first traversal), not Leiden or
+Louvain modularity optimization — there is no igraph/cdlib dependency here
+and no modularity score is computed. A prior version of this module named
+its method and this docstring after Leiden/Louvain; that overstated the
+implementation relative to what actually runs (GAP_REPORT_2026-09-11.md,
+GAP-07). Real modularity-optimizing community detection, if needed, is
+separate, scoped research work, not a rename of this function.
 """
 
 import logging
@@ -14,13 +21,18 @@ logger = logging.getLogger("GraphRAGCommunityClustering")
 
 
 class GraphCommunityClusterer:
-    """Hierarchical Community Clusterer for Neo4j Knowledge Base."""
+    """Connected-component clusterer for the Neo4j knowledge base."""
 
     def __init__(self):
         pass
 
-    def compute_leiden_communities(self, nodes: List[Dict], edges: List[Dict]) -> Dict[str, int]:
-        """Maps node IDs to detected community cluster IDs using graph partitioning.
+    def compute_connected_component_communities(self, nodes: List[Dict], edges: List[Dict]) -> Dict[str, int]:
+        """Maps node IDs to connected-component IDs via breadth-first traversal.
+
+        Not Leiden/Louvain: no modularity score is computed, and nodes within
+        one connected component always land in the same community regardless
+        of internal structure — dense vs. sparse subgraphs are not
+        distinguished the way a modularity-optimizing algorithm would.
 
         Args:
             nodes: List of dicts with 'id' key.
@@ -32,7 +44,6 @@ class GraphCommunityClusterer:
         if not nodes:
             return {}
 
-        # Fallback greedy modularity partition if igraph/cdlib not installed
         node_ids = [n["id"] for n in nodes if "id" in n]
         clusters: Dict[str, int] = {}
         
@@ -59,7 +70,7 @@ class GraphCommunityClusterer:
                             visited.add(neighbor)
                             queue.append(neighbor)
 
-        logger.info(f"Partitioned {len(nodes)} graph nodes into {community_counter} hierarchical communities.")
+        logger.info(f"Partitioned {len(nodes)} graph nodes into {community_counter} connected-component communities.")
         return clusters
 
     def format_community_meta_summary(self, community_id: int, member_nodes: List[Dict]) -> Dict:
@@ -78,7 +89,7 @@ if __name__ == "__main__":
     clusterer = GraphCommunityClusterer()
     sample_nodes = [{"id": "n1", "name": "Planner"}, {"id": "n2", "name": "Z3 Solver"}, {"id": "n3", "name": "Kahn DAG"}]
     sample_edges = [{"source": "n1", "target": "n2"}, {"source": "n2", "target": "n3"}]
-    res = clusterer.compute_leiden_communities(sample_nodes, sample_edges)
+    res = clusterer.compute_connected_component_communities(sample_nodes, sample_edges)
     summary = clusterer.format_community_meta_summary(1, sample_nodes)
     print("Clusters:", res)
     print("Meta-Summary:", summary)

@@ -291,9 +291,15 @@ def evaluate_quality_gate(state_: dict) -> QualityGateDecision:
     return QualityGateDecision("gate", "; ".join(reason_parts), cynefin_domain)
 
 
-def evaluate_program_sketch(sketch_data: dict) -> dict:
-    """
-    Evaluates a program sketch with 'holes' (placeholders) against schema bounds.
+def check_program_sketch_bounds(sketch_data: dict) -> dict:
+    """Fills a program sketch's 'holes' (placeholders) from simple per-type
+    bound checks (int min<=max, non-empty enum) — plain dict/comparison
+    logic, no constraint solver. 'smt_bounds'/'unsat_core' in the input/
+    output shape name the SMT concepts this approximates, not an actual
+    SMT solver call: there is no cross-variable constraint propagation here,
+    each hole is checked independently (GAP_REPORT_2026-09-11.md, GAP-07).
+    A real SMT-backed sketch solver, if needed, is separate, scoped research
+    work, not a rename of this function.
     """
     holes = sketch_data.get('holes', {})
     smt_bounds = sketch_data.get('smt_bounds', {})
@@ -338,9 +344,12 @@ def evaluate_program_sketch(sketch_data: dict) -> dict:
     }
 
 
-def run_dspy_teleprompter_gate(trace: dict) -> dict:
-    """
-    Evaluates a prompt execution trace against 3 assertion tiers.
+def check_trace_assertion_tiers(trace: dict) -> dict:
+    """Checks a prompt execution trace against 3 ordered assertion tiers
+    (egress_local_only set, canonical_json_hash present, trust_verdict not
+    BLOCK) — three dict-key checks, no DSPy optimizer or teleprompter is
+    invoked here (GAP_REPORT_2026-09-11.md, GAP-07). A real DSPy-backed gate,
+    if needed, is separate, scoped work, not a rename of this function.
     """
     if not trace.get('egress_local_only', False):
         return {'passed': False, 'tier_failed': 1, 'reason': 'Egress local only flag is missing or false'}

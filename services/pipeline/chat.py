@@ -1644,8 +1644,15 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
 
     # Auth
     raw_key  = _extract_api_key(raw_request)
-    # ── Diagnostic auth log (remove after debugging missing-API-key issue) ──
-    # Never logs the key itself, only its prefix shape and which header it came from.
+    # ── Diagnostic auth log ──────────────────────────────────────────────────
+    # key_id is a truncated SHA-256 of the raw key: enough to correlate log
+    # lines for "the same key" across requests without ever writing out any
+    # part of the actual secret. A raw prefix (the previous version of this
+    # block) is partial key material, not a safe identifier — a moe-sk- key's
+    # first 10 chars meaningfully narrows the brute-force space, and
+    # PROJECT_COMPLIANCE.md forbids logging credential fragments regardless
+    # (GAP_REPORT_2026-09-11.md, GAP-11).
+    import hashlib as _hashlib
     _auth_hdr   = raw_request.headers.get("authorization", "")
     _xapi_hdr   = raw_request.headers.get("x-api-key", "")
     _hdr_source = (
@@ -1654,13 +1661,13 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
         "authorization-other"   if _auth_hdr else
         "none"
     )
-    _key_prefix = (raw_key or "")[:10]
+    _key_id     = _hashlib.sha256(raw_key.encode()).hexdigest()[:12] if raw_key else "none"
     _key_len    = len(raw_key or "")
     _is_moe_sk  = bool(raw_key and raw_key.startswith("moe-sk-"))
     _origin_ip  = raw_request.client.host if raw_request.client else "?"
     logger.warning(
-        "🔍 chat-auth-debug ip=%s hdr_source=%s key_prefix=%r key_len=%d is_moe_sk=%s model=%r",
-        _origin_ip, _hdr_source, _key_prefix, _key_len, _is_moe_sk, request.model,
+        "🔍 chat-auth-debug ip=%s hdr_source=%s key_id=%s key_len=%d is_moe_sk=%s model=%r",
+        _origin_ip, _hdr_source, _key_id, _key_len, _is_moe_sk, request.model,
     )
     # ── End diagnostic block ───────────────────────────────────────────────
     user_ctx = await _validate_api_key(raw_key) if raw_key else {"error": "invalid_key"}
