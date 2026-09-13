@@ -904,7 +904,13 @@ async def _init_enterprise_stack() -> None:
         ("lakeFS",  f"{LAKEFS_ENDPOINT}/api/v1/config" if LAKEFS_ENDPOINT else None),
     ]
     reachable_count = 0
-    async with httpx.AsyncClient(timeout=3.0) as client:
+    # NiFi's compose service enables HTTPS via SINGLE_USER_CREDENTIALS, which
+    # makes NiFi generate its own self-signed cert on first start — there is
+    # no stable cert to pin (a fresh install/keystore regenerates it), and it
+    # never leaves the docker-internal network (NIFI_URL is the container
+    # hostname). Marquez/lakeFS are plain http:// already, so this only
+    # affects the NiFi request; verification stays on for everything else.
+    async with httpx.AsyncClient(timeout=3.0, verify=False) as client:
         for name, url in checks:
             if not url:
                 continue
