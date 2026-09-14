@@ -49,7 +49,7 @@ ORCHESTRATOR_URL = os.environ.get("MOE_API_BASE", "http://localhost:8002")
 API_KEY = os.environ.get("MOE_API_KEY", "YOUR_API_KEY_HERE")
 
 JUDGE_MODEL = os.environ.get("MOE_JUDGE_MODEL", "sovereign-judge:27b")
-NATIVE_MODEL = "qwen3.8:27b"
+NATIVE_MODEL = os.environ.get("MOE_BENCHMARK_NATIVE_MODEL", "qwen3.8:27b")
 # Node for the "model@node" native-passthrough route on the MoE Sovereign API
 # (services/pipeline/chat.py) -- both the judge (scoring) and the native
 # baseline model live on this node. Never call Ollama directly: every LLM
@@ -59,11 +59,20 @@ JUDGE_NODE = os.environ.get("MOE_JUDGE_NODE", "N04-RTX")
 
 SUITE = os.environ.get("BENCHMARK_SUITE", "sovereign")
 
-# Template names configured in database (admin_expert_templates)
+# Template names configured in database (admin_expert_templates). Overridable
+# via env vars so this harness can target a different template family (e.g.
+# the LUMI-G ensemble) without editing source; defaults preserve the
+# historical qwen-based template names for existing callers.
 TEMPLATES = {
-    "compound_ai": "MoE Sovereign Scientific Benchmark",
-    "compound_ai_debate": "MoE Sovereign Deliberation Benchmark",
-    "ablation_no_graphrag": "MoE Sovereign Ablation (No GraphRAG)",
+    "compound_ai": os.environ.get(
+        "MOE_BENCHMARK_TEMPLATE_COMPOUND_AI", "MoE Sovereign Scientific Benchmark"
+    ),
+    "compound_ai_debate": os.environ.get(
+        "MOE_BENCHMARK_TEMPLATE_COMPOUND_AI_DEBATE", "MoE Sovereign Deliberation Benchmark"
+    ),
+    "ablation_no_graphrag": os.environ.get(
+        "MOE_BENCHMARK_TEMPLATE_ABLATION_NO_GRAPHRAG", "MoE Sovereign Ablation (No GraphRAG)"
+    ),
 }
 
 VALID_VERDICTS = {"EXCELLENT", "PASS", "DEFICIENT", "FAIL"}
