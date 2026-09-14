@@ -598,6 +598,34 @@ async def expert_worker(state_: AgentState):
                 if _expert_ctx_override > 0
                 else 0
             )
+            # Never downgrade a warm model: adaptive_context_window() scales DOWN
+            # to save VRAM on short prompts, but llama-server can't resize a
+            # running instance's context -- a smaller request for the SAME model
+            # forces a full unload+reload cycle. Same check/pattern as the
+            # JUDGE_NUM_CTX pin above and _invoke_judge_with_retry /
+            # _invoke_planner_with_retry (services/inference.py). Unlike that
+            # pin, this applies whenever a template sets context_window
+            # (_expert_ctx_override > 0), not just the >=25B/no-override case.
+            if _expert_ctx_for_api > 0 and token == "ollama" and url:
+                try:
+                    async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+                        _ps_r = await _ps_cl.get(
+                            f"{url.rstrip('/').removesuffix('/v1')}/api/ps",
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+                        for _loaded in _ps_r.json().get("models", []):
+                            _lname = _loaded.get("name", "").split(":")[0]
+                            _ename = model_name.split(":")[0]
+                            _loaded_ctx = _loaded.get("context_length", 0)
+                            if _lname == _ename and _loaded_ctx >= _expert_ctx_for_api:
+                                logger.info(
+                                    "expert: reusing warm model ctx=%d (adaptive would have requested %d, no reload needed, model=%s)",
+                                    _loaded_ctx, _expert_ctx_for_api, model_name,
+                                )
+                                _expert_ctx_for_api = _loaded_ctx
+                                break
+                except Exception:
+                    pass  # non-fatal — fall through to the adaptive ctx
             _extra_body = {"options": {"num_ctx": _expert_ctx_for_api}} if _expert_ctx_for_api > 0 else {}
             if state_.get("enable_habe"):
                 from services.inference import _inject_habe_prefix_embeddings
