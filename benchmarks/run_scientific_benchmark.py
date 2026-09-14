@@ -761,16 +761,35 @@ async def run_single_test_condition(
             if turn_idx == 3 or turn_idx == len(test_case.get("turns", [])):
                 final_response = t_content
 
-    # Scoring
-    det_score = deterministic_score(final_response, scoring_cfg)
-    judge_res = await judge_evaluation(
-        client=client,
-        test_case=test_case,
-        prompt=test_case.get("prompt") or test_case.get("turns", [{}])[-1].get("prompt", ""),
-        response_text=final_response
-    )
-    judge_score = float(judge_res.get("score") or judge_res.get("overall_score") or 5.0)
-    combined_score = round(0.4 * det_score + 0.6 * judge_score, 2)
+    # Scoring. A failed turn (pipeline error, e.g. the orchestrator's 500 on a
+    # planner contract violation) always yields _result_is_valid()==False
+    # downstream regardless of what the judge says, since it checks turns[].ok
+    # too -- so judge-scoring an empty/error response here is pure waste: a
+    # real LLM call (observed ~2min for the 32B judge) whose score is
+    # guaranteed to be discarded and backfilled. Skip it and record a verdict
+    # that isn't in VALID_VERDICTS so _result_is_valid's existing check still
+    # rejects it the same way. Confirmed live: an empty response from a
+    # PlannerContractError once scored Judge=8.5 -- harmless (discarded either
+    # way) but wasted the retry window and could confuse anyone reading the
+    # raw per-attempt score line before it's superseded by backfill.
+    if not all(t.get("ok", True) for t in turns_result):
+        det_score = 0.0
+        judge_score = 0.0
+        combined_score = 0.0
+        judge_res = {
+            "verdict": "PIPELINE_FAILED",
+            "reasoning": "Skipped judge evaluation: the pipeline call itself failed (turns[].ok is False), so there is no real response to grade.",
+        }
+    else:
+        det_score = deterministic_score(final_response, scoring_cfg)
+        judge_res = await judge_evaluation(
+            client=client,
+            test_case=test_case,
+            prompt=test_case.get("prompt") or test_case.get("turns", [{}])[-1].get("prompt", ""),
+            response_text=final_response
+        )
+        judge_score = float(judge_res.get("score") or judge_res.get("overall_score") or 5.0)
+        combined_score = round(0.4 * det_score + 0.6 * judge_score, 2)
 
     # Server-side self-critique/trust diagnostics, when present (additive
     # response metadata -- see services/pipeline/chat.py::_build_diagnostic_metadata).
