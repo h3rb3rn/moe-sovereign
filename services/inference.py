@@ -1458,6 +1458,29 @@ async def _invoke_planner_with_retry(
                 minimum_internal=256,
             ),
         )
+        # Never downgrade a warm model — same pattern as the native-call branch
+        # above. This fallback path re-derives ctx independently (see comment
+        # above), so it needs its own reuse check rather than inheriting one.
+        if _fb_ctx > 0:
+            try:
+                async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+                    _ps_r = await _ps_cl.get(
+                        f"{_p_url_base.removesuffix('/v1')}/api/ps",
+                        headers={"Authorization": f"Bearer {_pt}"},
+                    )
+                    for _loaded in _ps_r.json().get("models", []):
+                        _lname = _loaded.get("name", "").split(":")[0]
+                        _ename = _pm.split(":")[0]
+                        _loaded_ctx = _loaded.get("context_length", 0)
+                        if _lname == _ename and _loaded_ctx >= _fb_ctx:
+                            logger.info(
+                                "planner (fallback path): reusing warm model ctx=%d (requested %d, no reload needed, model=%s)",
+                                _loaded_ctx, _fb_ctx, _pm,
+                            )
+                            _fb_ctx = _loaded_ctx
+                            break
+            except Exception:
+                pass  # non-fatal — fall through to the adaptive ctx
         _planner_extra_body: dict = {
             "think": PLANNER_THINKING_ENABLED,
         }
