@@ -1652,6 +1652,24 @@ docker exec terra_checkpoints psql -U moe_admin -d moe_userdb -At -c \
 ```
 Expected two rows: `…-review | … | ["security"] |` (empty last column) and `…-review-nosc | … | ["security"] | true`.
 
+**Required after the SQL (found during execution):** the orchestrator reads permissions from a Valkey cache
+(`user:apikey:<hash>`, TTL 24 h), not from the database. Without a cache refresh the API key gets
+`template_not_authorized` for the new templates. Refresh it with the same function the Admin UI calls after a
+permission grant:
+
+```bash
+docker exec -w /app moe-admin python3 -c "
+import asyncio, json, database
+async def main():
+    await database.init_db()
+    uid = 'b1a128df87944e5f808a9fc9a10e064a'   # user horndev
+    await database.sync_user_to_redis(uid)
+    s = json.dumps(await database.get_permissions_map(uid))
+    print('review:', 'tmpl-smollm3-review' in s, 'review-nosc:', 'tmpl-smollm3-review-nosc' in s)
+asyncio.run(main())"
+```
+Expected output: `review: True review-nosc: True`.
+
 Also verify the grants: `docker exec terra_checkpoints psql -U moe_admin -d moe_userdb -At -c "select id, resource_id from permissions where resource_id like 'tmpl-smollm3-review%'"` → two rows.
 If the SQL fails because the `permissions` rows for `tmpl-11f532fc` count is not exactly 1
 (check: `select count(*) from permissions where resource_id='tmpl-11f532fc'` → at planning time `1`), STOP and report.
@@ -1867,3 +1885,29 @@ needs another's result.
   (`sha256:e0047e24b14b`, kept for rollback) if wanted.
 - Measurement caveat for all later arms: they use the fixed judge (reference + rubric); values from
   runs before B1 are not comparable.
+
+### Deploy and live validation (2026-09-18, ~21:15–21:47 UTC)
+
+- Deployed `moe-sovereign-orchestrator:local` built from a clean `git archive` export
+  (revision recorded in the image label `org.opencontainers.image.revision`); previous image kept as
+  `moe-sovereign-orchestrator:pre-runbook-20260918`. Container healthy, `PLANNER_MAX_TASKS=8` effective.
+  `moe-admin` needed no rebuild (design files are bind-mounted, hashes identical).
+- Arm N was stopped for the deploy (4 of 24 native evaluations saved in the checkpoint) and is resumed
+  without `--fresh`.
+- Live request with template `LUMI-G OLMo + SmolLM3 Sovereign Ensemble - Review` (`no_cache`, one Rust
+  ring-buffer prompt, 27.7 min wall clock):
+  - review wave ran once (`security` reviewing `code_reviewer`, 20 s) and registered conflicts;
+  - endpoint queue-wait log lines appeared (34 s on `N02-M60-02`, 46 s on `N02-M60-09`);
+  - self-critique stopped after round 1 (`trust gain -0.067 < 0.050`), saving the second round;
+  - critic ran and returned a compliant correction; HITL gate approved; response 4.2k chars with code;
+  - `routing_telemetry` row written with `wall_clock_ms = 1659682` (previously always 0) and 5 experts.
+- **Not verified live:** the quality-probe wiring in `/v1/chat/completions` (sampling rate 5 %, skipped for
+  `no_cache`). Static check: all names used in the block are defined in `chat_completions`.
+- Defects found during validation and fixed on the branch:
+  1. Permissions cache: direct DB insert of permissions is invisible until the Valkey user cache is refreshed
+     (documented in E4 above).
+  2. `routing_telemetry.planner_plan` was empty in all 1319 historical rows (telemetry read `planner_plan`, the
+     commit payload carries `plan`); fixed with a regression test.
+  3. `benchmarks/run_scientific_benchmark.py` contained a hard-coded Valkey password (present in published
+     `main` since commit `f1d52b43`); now read from `REDIS_PASSWORD` (environment or repository `.env`).
+     **The credential is public in git history and must be rotated by the operator.**
