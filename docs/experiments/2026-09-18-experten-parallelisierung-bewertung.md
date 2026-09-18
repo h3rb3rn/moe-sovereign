@@ -4,6 +4,11 @@
 **Methode:** Auswertung des Orchestrator-Logs (Requests `chatcmpl-4b48ac5e`, `chatcmpl-5d4618fd`, `chatcmpl-fddd53b5`), Codeanalyse (Commit `e3e29a87`), Datenbankabfragen (`admin_expert_templates`, `routing_telemetry`, `usage_log`), Benchmark-Reports vom 18.09.2026.
 **Stichprobe / Grenzen:** n = 4–5 Messungen pro Bedingung im Basislauf (`053904`), einzelne Requests für die Phasenzeiten; alter Benchmark-Judge ohne Referenzantwort (siehe §6). Alle Vorher/Nachher-Werte in §4 sind Prognosen, keine Messungen.
 
+> **Korrektur (2026-09-19):** Zwei Aussagen dieses Dokuments sind nach weiteren Messungen **nicht belegt** und ersetzt durch:
+> 1. *„Die Pipeline ist schlechter (5,17 vs. 5,58) und 3,5× langsamer als die Baseline“* (§1.2): Belastbar ist nur die Latenzaussage (judge-unabhängig; im Live-Test ca. 14× langsamer als ein nativer OLMo-7B-Aufruf, 1660 s gegenüber ca. 115 s). Der Qualitätsvergleich ist nicht belastbar: n = 4 je Bedingung, und Judge- sowie Native-Modell des Laufs `053904` sind im Report nicht aufgezeichnet.
+> 2. *„Der Judge bewertete ohne Referenz und erklärt daher Judge-Werte von 1,0–5,5“* (§6, A1): Der Judge erhielt zwar tatsächlich keine Referenz und keine Rubrik (Fix B1 bleibt richtig), aber der Spur-2-Lauf `191206` mit demselben Judge-Modell und ohne Referenz vergab 8,5 für dieselbe Aufgabe. Die niedrigen Werte des Laufs `053904` sind daher nicht auf die fehlende Referenz zurückzuführen; die Ursache ist offen.
+> Messung mit korrigiertem Judge (Arm N, natives OLMo-7B, 4 Aufgaben, Runde 1): Gesamtscore Ø 9,2, Judge Ø 9,4, deterministisch Ø 9,0. Das ist ein **Deckeneffekt**: Der Benchmark lässt in dieser Form nur wenig Spielraum, um einen Qualitätsgewinn der Pipeline nachzuweisen. Die Hypothese H2 (+0,5 bis +1,5 Judge-Score) ist damit im Wesentlichen nicht prüfbar; die Latenzhypothesen (P0) sind es weiterhin.
+
 **Stand:** 18.09.2026 · **Bezug:** `~/.gemini/antigravity-cli/brain/31048543-…/plan_komplementaere_experten_parallelisierung.md`
 **Leitprinzip:** Ökonomisches Maximumprinzip – mit den vorhandenen Mitteln (8 dedizierte M60-Ports, 1 Judge auf N04-RTX, 1 Planner auf N04-RGTX, bestehender Code) den größtmöglichen Qualitäts- und Latenzgewinn erzielen. Kein neues Framework, keine neue Hardware, kein neues Training.
 
