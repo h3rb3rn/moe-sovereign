@@ -219,3 +219,53 @@ class TestEnsurePairCoverage:
             permanently_failed=permanently_failed,
         )
         run_mock.assert_not_called()  # never re-attempted, not even once
+
+
+class TestJudgeReference:
+    def test_single_turn_reference_from_expected_answer(self):
+        from benchmarks.run_scientific_benchmark import _derive_ground_truth
+        ref = _derive_ground_truth({"expected_answer": {"annual_mwh": 7358.4}})
+        assert "7358.4" in ref
+
+    def test_multi_turn_reference_from_last_turn(self):
+        from benchmarks.run_scientific_benchmark import _derive_ground_truth
+        ref = _derive_ground_truth({"turns": [{"prompt": "a"}, {"prompt": "b", "expected_behavior": "quorum loss"}]})
+        assert ref == "quorum loss"
+
+    def test_missing_reference_is_empty(self):
+        from benchmarks.run_scientific_benchmark import _derive_ground_truth
+        assert _derive_ground_truth({"id": "x"}) == ""
+
+    @pytest.mark.asyncio
+    async def test_judge_prompt_contains_reference_and_rubric(self, monkeypatch):
+        import benchmarks.run_scientific_benchmark as rsb
+        captured = {}
+
+        async def _fake_query(client, model, messages, **kwargs):
+            captured["prompt"] = messages[0]["content"]
+            return {"ok": True, "content": '{"score": 7.0, "reasoning": "ok", "verdict": "PASS"}'}
+
+        monkeypatch.setattr(rsb, "query_moe_orchestrator", _fake_query)
+        tc = {
+            "id": "t1", "discipline": "d", "task_name": "n", "complexity": "expert",
+            "expected_answer": {"required_concepts": ["acquire"]},
+            "scoring": {"rubric": "RUBRIC-MARKER"},
+        }
+        res = await rsb.judge_evaluation(client=None, test_case=tc, prompt="p", response_text="r")
+        assert "acquire" in captured["prompt"]
+        assert "RUBRIC-MARKER" in captured["prompt"]
+        assert float(res.get("score")) == 7.0
+
+
+class TestNumericTolerance:
+    def test_formatted_numbers_match(self):
+        from benchmarks.run_scientific_benchmark import numeric_tolerance_score
+        assert numeric_tolerance_score("Cost: 1,361,304.00 EUR", {"c": 1361304.0}, 0.5) == 10.0
+
+    def test_out_of_tolerance_fails(self):
+        from benchmarks.run_scientific_benchmark import numeric_tolerance_score
+        assert numeric_tolerance_score("Cost: 1300000", {"c": 1361304.0}, 0.5) == 0.0
+
+    def test_keyword_type_unchanged(self):
+        from benchmarks.run_scientific_benchmark import deterministic_score
+        assert deterministic_score("Acquire Release", {"required_keywords": ["Acquire", "Release"]}) == 10.0

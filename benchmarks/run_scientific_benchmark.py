@@ -484,6 +484,24 @@ def deterministic_evaluation(test_case: Dict[str, Any], response_text: str) -> D
     }
 
 
+def _derive_ground_truth(test_case: Dict[str, Any]) -> str:
+    """Reference answer for the judge prompt.
+
+    The v1 dataset stores the reference as ``expected_answer`` (single-turn)
+    or ``turns[-1].expected_behavior`` (multi-turn), not as
+    ``ground_truth_reference``.
+    """
+    expected = test_case.get("expected_answer")
+    if expected:
+        if isinstance(expected, (dict, list)):
+            return json.dumps(expected, ensure_ascii=False, indent=2)
+        return str(expected)
+    turns = test_case.get("turns") or []
+    if turns and isinstance(turns[-1], dict) and turns[-1].get("expected_behavior"):
+        return str(turns[-1]["expected_behavior"])
+    return ""
+
+
 async def judge_evaluation(
     client: httpx.AsyncClient,
     test_case: Dict[str, Any],
@@ -501,8 +519,13 @@ async def judge_evaluation(
     tasks/conditions fail more often), not random noise -- observed fallback
     rates of 15-50% across recent runs, see agent_status/claude-code.md.
     """
-    criteria = test_case.get("evaluation_rules", {}).get("semantic_criteria", "")
-    ground_truth = test_case.get("ground_truth_reference", "")
+    criteria = (
+        (test_case.get("evaluation_rules") or {}).get("semantic_criteria", "")
+        or (test_case.get("scoring") or {}).get("rubric", "")
+    )
+    ground_truth = test_case.get("ground_truth_reference", "") or _derive_ground_truth(test_case)
+    if not ground_truth:
+        logger.warning("Judge evaluation for %s has no reference answer", test_case.get("id"))
 
     base_judge_prompt = f"""You are an uncompromising academic and technical evaluation judge for sovereign compound AI systems.
 Evaluate the model response against the prompt, ground truth reference, and specific criteria.
@@ -635,10 +658,41 @@ Respond ONLY with a JSON object in this exact schema:
     }
 
 
-def deterministic_score(response: str, scoring_cfg: Dict[str, Any]) -> float:
+_NUMBER_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+
+
+def _numbers_in(text: str) -> List[float]:
+    values: List[float] = []
+    for raw in _NUMBER_RE.findall(text or ""):
+        try:
+            values.append(float(raw.replace(",", "")))
+        except ValueError:
+            continue
+    return values
+
+
+def numeric_tolerance_score(response: str, expected: Dict[str, Any], tolerance_pct: float) -> float:
+    """Share of expected numeric values found in the response within tolerance, scaled to 0..10."""
+    targets = [float(v) for v in (expected or {}).values() if isinstance(v, (int, float))]
+    if not targets:
+        return 10.0
+    found = _numbers_in(response)
+    hits = 0
+    for target in targets:
+        allowed = abs(target) * tolerance_pct / 100.0
+        if any(abs(value - target) <= allowed for value in found):
+            hits += 1
+    return round(hits / len(targets) * 10.0, 2)
+
+
+def deterministic_score(response: str, scoring_cfg: Dict[str, Any], expected_answer: Optional[Dict[str, Any]] = None) -> float:
     """Compute deterministic score based on required keywords and exact numbers."""
     if not response:
         return 0.0
+    if scoring_cfg.get("type") == "numeric_tolerance" and isinstance(expected_answer, dict):
+        return numeric_tolerance_score(
+            response, expected_answer, float(scoring_cfg.get("tolerance_pct") or 0.5)
+        )
     res_lower = response.lower()
     req_kws = scoring_cfg.get("required_keywords") or scoring_cfg.get("turn3_required_keywords") or []
     if not req_kws:
@@ -781,7 +835,7 @@ async def run_single_test_condition(
             "reasoning": "Skipped judge evaluation: the pipeline call itself failed (turns[].ok is False), so there is no real response to grade.",
         }
     else:
-        det_score = deterministic_score(final_response, scoring_cfg)
+        det_score = deterministic_score(final_response, scoring_cfg, expected_answer)
         judge_res = await judge_evaluation(
             client=client,
             test_case=test_case,
@@ -1148,6 +1202,9 @@ async def main():
         "run_id": run_id,
         "timestamp": timestamp,
         "dataset": DATASET_PATH.name,
+        "arm": os.environ.get("MOE_BENCHMARK_ARM", ""),
+        "pipeline_commit": os.environ.get("MOE_PIPELINE_COMMIT", ""),
+        "judge_reference_fix": True,
         "summary": summary_by_condition,
         "summary_valid_only": summary_by_condition_valid_only,
         "lumi_finetuning_validation": {
