@@ -113,6 +113,7 @@ def build_response_commit_payload(
         "enable_graphrag": bool(state_.get("enable_graphrag", True)),
         "tier_escalations": int(state_.get("tier_escalations") or 0),
         "response_commit_context": state_.get("response_commit_context") or {},
+        "query_embedding": state_.get("query_embedding") or [],
     }
     return _json_safe(payload)
 
@@ -205,16 +206,18 @@ async def _run_learning_signals(payload: Mapping[str, Any]) -> None:
             best[category] = confidence
     from services.inference import _record_expert_outcome
 
+    query_embedding = payload.get("query_embedding") or None
+
     for model_category in payload.get("expert_models_used") or []:
         if "::" not in str(model_category):
             continue
         model, category = str(model_category).split("::", 1)
         if category in refined:
-            await _record_expert_outcome(model, category, positive=False)
+            await _record_expert_outcome(model, category, positive=False, query_embedding=query_embedding)
         elif best.get(category) == "high":
-            await _record_expert_outcome(model, category, positive=True)
+            await _record_expert_outcome(model, category, positive=True, query_embedding=query_embedding)
         elif best.get(category) == "low":
-            await _record_expert_outcome(model, category, positive=False)
+            await _record_expert_outcome(model, category, positive=False, query_embedding=query_embedding)
 
     routing_context = str(payload.get("routing_bandit_context") or "")
     if "|||" in routing_context:
@@ -229,10 +232,12 @@ async def _run_learning_signals(payload: Mapping[str, Any]) -> None:
         await record(
             "research", research_context,
             not bool(payload.get("skip_research")), research_ok,
+            query_embedding=query_embedding,
         )
         await record(
             "graphrag", graph_context,
             bool(payload.get("enable_graphrag", True)), not bool(refined),
+            query_embedding=query_embedding,
         )
 
     from services.policy_log import log_policy_event

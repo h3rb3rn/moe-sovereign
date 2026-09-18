@@ -602,6 +602,20 @@ async def merger_node(state_: AgentState):
                                            JUDGE_NUM_CTX, label="synthesis")
     _merger_maxout = await _get_max_out_async(_merger_judge_model, _merger_judge_url,
                                               _merger_judge_tok, state.redis_client)
+    # Code-heavy merger tasks (systems_programming/code_reviewer) routinely need
+    # a full critique PLUS one or more corrected code blocks in one response.
+    # Observed live: a 2048-token budget cut the judge off mid rewrite, leaving
+    # an odd ``` count that the plausibility gate then rejected as
+    # unclosed_code_block (services/quality_gate.py verify_response_plausibility)
+    # -- not a prompt-wording issue, a genuine output-budget shortfall for this
+    # task shape. resolve_io_budget() below still caps the final value against
+    # the model's real context window, so this only widens headroom when there
+    # is room to give.
+    _merger_code_categories_present = (
+        {_expert_category(r) for r in expert_results} & _RUST_COMPILE_CHECK_CATEGORIES
+    )
+    if _merger_code_categories_present:
+        _merger_maxout = int(_merger_maxout * 1.75)
     if _merger_ctx > 0:
         _budget = resolve_io_budget(
             ctx_tokens=_merger_ctx, desired_max_tokens=_merger_maxout,

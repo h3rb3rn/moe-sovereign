@@ -144,7 +144,21 @@ async def expert_worker(state_: AgentState):
     if state_.get("cache_hit"):
         return {"expert_results": []}
 
-    NON_EXPERT_CATEGORIES = {"precision_tools", "research", "math"}
+    NON_EXPERT_CATEGORIES = {"precision_tools", "math"}
+    # "research" is normally owned exclusively by research_node (live web
+    # search) -- excluded here to avoid answering it twice. But research_node
+    # itself skips web search (enable_web_research=False template toggle, or
+    # skip_research complexity routing) and returns the task with status
+    # "skipped", never "completed". With research also excluded here, such a
+    # task never gets ANY output, and quality_gate_node's incomplete_plan_tasks
+    # check then permanently blocks the whole response with
+    # "incomplete_task_execution:<id>:skipped" -- observed live, every request
+    # containing a research-category task on a research-disabled template.
+    # Only exclude "research" here when research_node is actually going to
+    # answer it; otherwise fall back to the category's configured expert model
+    # (e.g. smollm3-expert-research-3b) so the task still gets a real answer.
+    if state_.get("enable_web_research", True) and not state_.get("skip_research"):
+        NON_EXPERT_CATEGORIES = NON_EXPERT_CATEGORIES | {"research"}
     local_conflicts = []
     plan         = state_.get("plan", [])
     chat_history = state_.get("chat_history") or []
@@ -1006,7 +1020,7 @@ async def expert_worker(state_: AgentState):
 
         scored = []
         for e in normal_experts:
-            score = await _get_expert_score(e["model"], cat)
+            score = await _get_expert_score(e["model"], cat, query_embedding=state_.get("query_embedding"))
             scored.append((score, e))
         scored.sort(key=lambda x: -x[0])
 
@@ -1271,7 +1285,7 @@ async def expert_worker(state_: AgentState):
                 score = (
                     2.0
                     if model_cfg.get("forced")
-                    else await _get_expert_score(model_name, category)
+                    else await _get_expert_score(model_name, category, query_embedding=state_.get("query_embedding"))
                 )
                 candidate_pool.append((score, category, model_cfg))
 

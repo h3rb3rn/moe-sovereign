@@ -67,6 +67,8 @@ class AgentState(TypedDict):
     trivial_fast_path: bool             # Conservative one-shot path selected by planner
     pending_reports: List[str]          # Progress messages collected before pipeline starts streaming
     metadata_filters: Dict              # Optional domain filters from planner for scoped ChromaDB retrieval
+    query_embedding: List[float]        # BGE embedding of `input`, computed once (see services/pipeline/chat.py);
+                                         # empty when not computed (feature disabled or RouteLLM/pattern-prior off)
 
     # ── 3. Node results ───────────────────────────────────────────────────────
     # Annotated[list, operator.add] means LangGraph accumulates values from

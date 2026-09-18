@@ -916,7 +916,8 @@ async def main():
     print("=" * 80)
     print("🚀 MOE SOVEREIGN SCIENTIFIC MULTIDISCIPLINARY BENCHMARK")
     print(f"Dataset: {DATASET_PATH.name}")
-    print(f"Planner Model: moe-sovereign-student:4b @ N04-RGTX (port 11435)")
+    # Dynamically resolve planner template reference instead of obsolete hardcoded student:4b
+    print(f"Planner Template: {TEMPLATES['compound_ai']} @ N04-RGTX (port 11435)")
     print(f"Judge Model:   {JUDGE_MODEL} @ N04-RTX (port 11434)")
     print(f"Expert Models: {NATIVE_MODEL} @ N04-RTX")
     print(f"Baseline:      Native {NATIVE_MODEL} (Direct Inference)")
@@ -986,36 +987,41 @@ async def main():
         # hours on a run that would otherwise silently produce 48x empty-response failures
         # (this exact failure mode hit every run on 2026-08-18/19 until the template names
         # were corrected against admin_expert_templates).
-        print("\n🔎 Pre-flight: verifying orchestrator templates resolve...", flush=True)
-        preflight_failed = []
-        for cond_name, target_cfg in conditions:
-            if cond_name == "native_baseline":
-                continue
-            # A bare "ping" gives the planner no real signal to plan around --
-            # observed live to make it hallucinate an unrelated task (e.g.
-            # "Characterize DNS, HTTP, gRPC... routing"), which then
-            # predictably fails trust-score/plausibility and comes back as a
-            # 422 quality_blocked. That 422 actually proves the template
-            # resolves and the full pipeline runs end to end; it is not the
-            # "template name doesn't exist" failure this check exists to
-            # catch. Use a minimal but genuine question, and additionally
-            # treat quality_blocked as a pass (template alive, just declined
-            # a low-signal probe) rather than a hard failure.
-            probe = await query_moe_orchestrator(client, target_cfg, [{"role": "user", "content": "What is 2 + 2?"}])
-            _err = str(probe.get("error", ""))
-            if not probe.get("ok") and "quality_blocked" not in _err:
-                preflight_failed.append((cond_name, target_cfg, probe.get("error", "unknown error")))
-                print(f"  ✗ {cond_name:22} ({target_cfg!r}): {_err[:200]}", flush=True)
-            elif not probe.get("ok"):
-                print(f"  ✓ {cond_name:22} ({target_cfg!r}) resolves (quality gate declined trivial probe)", flush=True)
-            else:
-                print(f"  ✓ {cond_name:22} ({target_cfg!r}) resolves", flush=True)
-        if preflight_failed:
-            print("\n❌ Pre-flight failed -- aborting before burning compute on broken templates:", file=sys.stderr)
-            for cond_name, target_cfg, err in preflight_failed:
-                print(f"   {cond_name}: template {target_cfg!r} -> {err}", file=sys.stderr)
-            sys.exit(1)
-        print("✅ Pre-flight passed: all templates resolve.\n", flush=True)
+        # Optional pre-flight bypass via MOE_BENCHMARK_SKIP_PREFLIGHT
+        _skip_preflight = bool(os.environ.get("MOE_BENCHMARK_SKIP_PREFLIGHT", "").strip())
+        if _skip_preflight:
+            print("\n⚡ Pre-flight skipped via MOE_BENCHMARK_SKIP_PREFLIGHT -- starting benchmark directly...\n", flush=True)
+        else:
+            print("\n🔎 Pre-flight: verifying orchestrator templates resolve...", flush=True)
+            preflight_failed = []
+            for cond_name, target_cfg in conditions:
+                if cond_name == "native_baseline":
+                    continue
+                # A bare "ping" gives the planner no real signal to plan around --
+                # observed live to make it hallucinate an unrelated task (e.g.
+                # "Characterize DNS, HTTP, gRPC... routing"), which then
+                # predictably fails trust-score/plausibility and comes back as a
+                # 422 quality_blocked. That 422 actually proves the template
+                # resolves and the full pipeline runs end to end; it is not the
+                # "template name doesn't exist" failure this check exists to
+                # catch. Use a minimal but genuine question, and additionally
+                # treat quality_blocked as a pass (template alive, just declined
+                # a low-signal probe) rather than a hard failure.
+                probe = await query_moe_orchestrator(client, target_cfg, [{"role": "user", "content": "What is 2 + 2?"}])
+                _err = str(probe.get("error", ""))
+                if not probe.get("ok") and "quality_blocked" not in _err:
+                    preflight_failed.append((cond_name, target_cfg, probe.get("error", "unknown error")))
+                    print(f"  ✗ {cond_name:22} ({target_cfg!r}): {_err[:200]}", flush=True)
+                elif not probe.get("ok"):
+                    print(f"  ✓ {cond_name:22} ({target_cfg!r}) resolves (quality gate declined trivial probe)", flush=True)
+                else:
+                    print(f"  ✓ {cond_name:22} ({target_cfg!r}) resolves", flush=True)
+            if preflight_failed:
+                print("\n❌ Pre-flight failed -- aborting before burning compute on broken templates:", file=sys.stderr)
+                for cond_name, target_cfg, err in preflight_failed:
+                    print(f"   {cond_name}: template {target_cfg!r} -> {err}", file=sys.stderr)
+                sys.exit(1)
+            print("✅ Pre-flight passed: all templates resolve.\n", flush=True)
 
         # Run across multiple rounds. 5 rounds/cell (up from 2) so per-condition
         # standard error/CI are actually meaningful, not just point estimates from
@@ -1145,7 +1151,8 @@ async def main():
         "summary": summary_by_condition,
         "summary_valid_only": summary_by_condition_valid_only,
         "lumi_finetuning_validation": {
-            "planner_model": "moe-sovereign-student:4b (LUMI-G Distilled)",
+            # Dynamically reference template rather than obsolete student:4b label
+            "planner_model": f"{TEMPLATES['compound_ai']} (Planner on N04-RGTX)",
             "judge_model": JUDGE_MODEL,
             "native_comparison_model": NATIVE_MODEL,
         },
