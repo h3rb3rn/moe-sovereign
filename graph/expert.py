@@ -1728,6 +1728,107 @@ async def expert_worker(state_: AgentState):
                 "deliberation_events": local_deliberation_events,
             }
 
+    async def _run_review_wave(primary_results: List[dict]) -> Tuple[List[dict], List[dict], bool]:
+        """One parallel wave of complementary-lens reviews over primary expert outputs.
+
+        Opt-in per template category via ``review_lenses``. Each lens category is
+        dispatched at most once per wave, so a single-slot endpoint never gets
+        more than one review call. Reviews are prefixed ``[REVIEW:`` so the trust
+        score does not count them as experts (services/trust_score.py).
+        Returns (results, conflicts, replaces_self_critique).
+        """
+        if os.getenv("MOE_REVIEW_WAVE_ENABLED", "1") != "1":
+            return [], [], False
+        if state_.get("force_tier1") or str(state_.get("complexity_level") or "") in ("trivial", "memory_recall"):
+            return [], [], False
+        catalog = state_.get("user_experts") or {}
+        if not catalog:
+            return [], [], False
+        max_reviewers = int(os.getenv("MOE_REVIEW_WAVE_MAX_REVIEWERS", "4"))
+        max_input_chars = int(os.getenv("MOE_REVIEW_INPUT_CHARS", "6000"))
+
+        lens_targets: Dict[str, List[Tuple[str, str]]] = {}
+        replaces_sc = False
+        for result in primary_results:
+            model_cat = str(result.get("model_cat") or "")
+            text = str(result.get("res") or "")
+            if "::" not in model_cat or " ERROR]" in text or not text.strip():
+                continue
+            primary_cat = model_cat.rsplit("::", 1)[-1]
+            cfgs = catalog.get(primary_cat) or []
+            if not cfgs:
+                continue
+            if cfgs[0].get("_review_replaces_self_critique"):
+                replaces_sc = True
+            for lens in cfgs[0].get("_review_lenses") or []:
+                if lens == primary_cat or not catalog.get(lens):
+                    continue
+                lens_targets.setdefault(lens, []).append((primary_cat, text))
+        if not lens_targets:
+            return [], [], False
+
+        selected = list(lens_targets.items())[:max_reviewers]
+        logger.info(
+            "--- [NODE] REVIEW-WAVE (%d reviewer(s): %s) ---",
+            len(selected), ", ".join(lens for lens, _ in selected),
+        )
+        await _report(f"🔍 Review wave: {', '.join(lens for lens, _ in selected)}")
+        user_query = str(state_.get("input") or "")[:4000]
+
+        async def _one(index: int, lens: str, targets: List[Tuple[str, str]]) -> dict:
+            reviewed = "\n\n".join(
+                f"[Expert output ({pcat})]\n{ptext[:max_input_chars]}" for pcat, ptext in targets
+            )
+            review_task = {
+                "id": f"review-{lens}",
+                "category": lens,
+                "allowed_domains": [lens] + [pcat for pcat, _ in targets],
+                "_deliberation_turn": True,  # caps output at deliberation max_turn_tokens
+                "task": (
+                    f"[User Query]\n{user_query}\n\n{reviewed}\n\n[Task]\n"
+                    f"You are a reviewer from the '{lens}' discipline. Review the expert output(s) "
+                    "above strictly from the perspective of your discipline. List concrete defects, "
+                    "risks, missing requirements or wrong claims, each with a one-sentence "
+                    "justification and, where possible, the exact fix. Do NOT rewrite or "
+                    "re-implement the full solution. If you find no defect in your discipline, "
+                    "answer exactly: NO_FINDINGS"
+                ),
+            }
+            return await run_single(catalog[lens][0], review_task, 900 + index, 1)
+
+        raw = await asyncio.gather(
+            *[_one(i, lens, targets) for i, (lens, targets) in enumerate(selected)],
+            return_exceptions=True,
+        )
+        results: List[dict] = []
+        conflicts: List[dict] = []
+        from parsing import _improvement_ratio
+        for (lens, targets), res in zip(selected, raw):
+            if isinstance(res, BaseException) or not isinstance(res, dict):
+                logger.warning("Review wave: %s failed: %s", lens, res)
+                continue
+            text = str(res.get("res") or "")
+            if not res.get("model_cat") or " ERROR]" in text:
+                continue
+            content = text.split("]: ", 1)[1] if "]: " in text else text
+            if not content.strip() or "NO_FINDINGS" in content[:200]:
+                logger.info("Review wave: %s reported no findings", lens)
+                continue
+            primaries = ",".join(sorted({pcat for pcat, _ in targets}))
+            results.append({**res, "res": f"[REVIEW:{lens}→{primaries} / {lens}]: {content}"})
+            for pcat, ptext in targets:
+                div_score = _improvement_ratio(ptext[:1200], content[:1200])
+                if div_score >= 0.35:
+                    conflicts.append({
+                        "category": pcat,
+                        "proposition_a": ptext[:600],
+                        "proposition_b": content[:600],
+                        "divergence_score": round(div_score, 3),
+                        "resolution": "pending",
+                        "resolved_by": "",
+                    })
+        return results, conflicts, replaces_sc
+
     # Dynamic parallel/sequential execution via dependency levels.
     # Tasks with no 'depends_on' run in parallel (level 0).
     # Tasks whose 'depends_on' points to a level-N task run in level N+1.
@@ -1782,8 +1883,13 @@ async def expert_worker(state_: AgentState):
                     }
                 )
 
+    review_results, review_conflicts, review_replaces_sc = await _run_review_wave(all_results)
+    all_results.extend(review_results)
+    local_conflicts.extend(review_conflicts)
+
     used = [r["model_cat"] for r in all_results if r.get("model_cat")]
     return {
+        "review_replaces_self_critique": bool(review_replaces_sc and review_results),
         "expert_results":              [r["res"] for r in all_results if "res" in r],
         "expert_models_used":          used,
         "prompt_tokens":               sum(r.get("prompt_tokens",               0) for r in all_results),
