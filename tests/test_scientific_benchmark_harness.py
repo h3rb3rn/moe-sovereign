@@ -269,3 +269,29 @@ class TestNumericTolerance:
     def test_keyword_type_unchanged(self):
         from benchmarks.run_scientific_benchmark import deterministic_score
         assert deterministic_score("Acquire Release", {"required_keywords": ["Acquire", "Release"]}) == 10.0
+
+
+class TestRedisPasswordLookup:
+    def test_env_var_wins(self, monkeypatch):
+        from benchmarks import run_scientific_benchmark as rsb
+        monkeypatch.setenv("REDIS_PASSWORD", "from-env")
+        assert rsb._redis_password() == "from-env"
+
+    def test_reads_repo_env_file_when_env_unset(self, monkeypatch, tmp_path):
+        from benchmarks import run_scientific_benchmark as rsb
+        monkeypatch.delenv("REDIS_PASSWORD", raising=False)
+        (tmp_path / ".env").write_text("OTHER=1\nREDIS_PASSWORD='from-file'\n")
+        monkeypatch.setattr(rsb, "BASE_DIR", tmp_path / "benchmarks")
+        assert rsb._redis_password() == "from-file"
+
+    def test_none_when_nothing_configured(self, monkeypatch, tmp_path):
+        from benchmarks import run_scientific_benchmark as rsb
+        monkeypatch.delenv("REDIS_PASSWORD", raising=False)
+        monkeypatch.setattr(rsb, "BASE_DIR", tmp_path / "benchmarks")
+        assert rsb._redis_password() is None
+
+    def test_no_hardcoded_password_literal_in_source(self):
+        import pathlib
+        import re
+        src = pathlib.Path("benchmarks/run_scientific_benchmark.py").read_text()
+        assert not re.search(r"password\s*=\s*[\"'][A-Za-z0-9+/_\-]{12,}[\"']", src)

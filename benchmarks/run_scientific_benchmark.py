@@ -46,6 +46,26 @@ RESULTS_DIR = BASE_DIR / "results"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 ORCHESTRATOR_URL = os.environ.get("MOE_API_BASE", "http://localhost:8002")
+
+
+def _redis_password() -> Optional[str]:
+    """Valkey password for the HITL-gate fallback read; never hard-coded.
+
+    Order: REDIS_PASSWORD from the environment, then REDIS_PASSWORD from the
+    repository's .env file. Returns None when neither is set (the fallback read
+    then simply fails and is ignored by its caller).
+    """
+    value = os.environ.get("REDIS_PASSWORD")
+    if value:
+        return value
+    env_file = BASE_DIR.parent / ".env"
+    try:
+        for line in env_file.read_text().splitlines():
+            if line.startswith("REDIS_PASSWORD="):
+                return line.split("=", 1)[1].strip().strip("'\"") or None
+    except OSError:
+        return None
+    return None
 API_KEY = os.environ.get("MOE_API_KEY", "YOUR_API_KEY_HERE")
 
 JUDGE_MODEL = os.environ.get("MOE_JUDGE_MODEL", "sovereign-judge:27b")
@@ -332,7 +352,7 @@ async def query_moe_orchestrator(
                     elif appr_resp.status_code == 409:
                         try:
                             import redis
-                            r_cli = redis.Redis(host="localhost", port=6379, password="0lk0sbMwuMIbIC8HogUgygi4aIy562GX", decode_responses=True)
+                            r_cli = redis.Redis(host="localhost", port=6379, password=_redis_password(), decode_responses=True)
                             raw_gate = r_cli.get(f"hitl_gate:{gate_id}")
                             if raw_gate:
                                 content = json.loads(raw_gate).get("response_draft", "")
