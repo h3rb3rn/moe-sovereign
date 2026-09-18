@@ -300,7 +300,11 @@ async def expert_worker(state_: AgentState):
             return {"res": f"[{model_name} ERROR]: {_egress_exc}", "model_cat": None}
 
         from services.node_load import track as _track_node_load
+        _queue_wait_t0 = time.monotonic()
         async with semaphore, _track_node_load(endpoint):
+            _queue_wait_ms = int((time.monotonic() - _queue_wait_t0) * 1000)
+            if _queue_wait_ms >= 1000:
+                logger.info(f"⏳ Endpoint queue wait: {endpoint} {_queue_wait_ms} ms ({model_name})")
             task_text  = task_item.get("task", str(task_item))
             cat        = task_item.get("category", "general")
             is_deliberation_turn = bool(task_item.get("_deliberation_turn"))

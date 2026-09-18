@@ -20,6 +20,7 @@ from typing import Any, Awaitable, Callable, Mapping
 import state
 from config import (
     CACHE_MIN_RESPONSE_LEN,
+    ORCHESTRATION_TIMEOUT,
     JUDGE_MODEL,
     KAFKA_TOPIC_INGEST,
     PRECISION_CACHE_POLICY,
@@ -36,6 +37,15 @@ _LOCK_TTL_SECONDS = 300
 def _json_safe(value: Any) -> Any:
     """Round-trip a state subset into checkpointer/gate-safe JSON values."""
     return json.loads(json.dumps(value, default=str))
+
+
+def _elapsed_ms(state_: Mapping[str, Any]) -> int:
+    """Milliseconds since request start, derived from the shared request deadline."""
+    deadline = float(state_.get("request_deadline_monotonic") or 0.0)
+    if deadline <= 0:
+        return 0
+    started = deadline - float(ORCHESTRATION_TIMEOUT)
+    return max(0, int((time.monotonic() - started) * 1000))
 
 
 def build_response_commit_payload(
@@ -114,6 +124,7 @@ def build_response_commit_payload(
         "tier_escalations": int(state_.get("tier_escalations") or 0),
         "response_commit_context": state_.get("response_commit_context") or {},
         "query_embedding": state_.get("query_embedding") or [],
+        "wall_clock_ms": _elapsed_ms(state_),
     }
     return _json_safe(payload)
 
@@ -344,7 +355,7 @@ async def _sink_map(payload: Mapping[str, Any]) -> dict[str, Callable[[], Awaita
             state._userdb_pool,
             str(payload.get("request_id") or ""),
             dict(payload),
-            wall_clock_ms=0,
+            wall_clock_ms=int(payload.get("wall_clock_ms") or 0),
         )
 
     async def episode() -> None:
@@ -433,6 +444,21 @@ async def _sink_map(payload: Mapping[str, Any]) -> dict[str, Callable[[], Awaita
     return sinks
 
 
+async def _record_routing_telemetry_only(payload: Mapping[str, Any]) -> None:
+    """Write routing telemetry for requests whose other commit sinks are skipped. Never raises."""
+    try:
+        import telemetry
+
+        await telemetry.record_routing_decision(
+            state._userdb_pool,
+            str(payload.get("request_id") or ""),
+            dict(payload),
+            wall_clock_ms=int(payload.get("wall_clock_ms") or 0),
+        )
+    except Exception as exc:
+        logger.debug("Routing telemetry (no-cache path) failed: %s", exc)
+
+
 async def commit_response_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Commit all sinks once; preserve per-sink progress across retries."""
     frozen = _json_safe(dict(payload))
@@ -453,6 +479,9 @@ async def commit_response_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     if frozen.get("guard_blocked") or frozen.get("cache_hit"):
         return {"status": "skipped", "errors": []}
     if frozen.get("no_cache") or len(response) <= CACHE_MIN_RESPONSE_LEN:
+        # Caches, knowledge ingest and learning sinks stay skipped (benchmark
+        # isolation), but routing telemetry is observability, not learning.
+        await _record_routing_telemetry_only(frozen)
         return {"status": "skipped", "errors": []}
 
     commit_key = response_commit_key(frozen)

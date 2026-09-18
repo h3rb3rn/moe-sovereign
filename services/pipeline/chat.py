@@ -3273,6 +3273,22 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     # (self-critique round count, trust score/verdict). Merged via update() so
     # it can never clobber the sources/candidate keys set above.
     resp.setdefault("metadata", {}).update(_build_diagnostic_metadata(result))
+    if not request.no_cache:
+        # Online quality probe (sampled): pipeline vs. single best expert.
+        # Skipped for no_cache traffic so benchmark latency is not distorted.
+        try:
+            from services.quality_probe import run_probe as _qp_run
+            asyncio.create_task(_qp_run(
+                query=user_input, pipeline_answer=result["final_response"],
+                experts=user_experts, planner_cfg=_tmpl_prompts,
+                request_id=chat_id, user_id=user_id,
+                pipeline_tokens=c_tok,
+                graph_context=result.get("graph_context", ""),
+                web_research=result.get("web_research", ""),
+                mcp_result=result.get("mcp_result", ""),
+            ))
+        except Exception:
+            pass
     await _ol_complete(_ol_run_id, job_name="chat_completion",
                        outputs=[dataset_response(chat_id)])
     if _moe_resp_headers:
