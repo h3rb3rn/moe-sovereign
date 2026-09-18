@@ -4899,3 +4899,20 @@ Notes:
 - NOT deployed. Container still runs the pre-runbook image with PLANNER_MAX_TASKS=4 (env at creation);
   .env says 8. Deploy (C8/E5) only after arm A finished.
 - .env.example has foreign uncommitted changes plus A5/C7b additions: intentionally not committed (H2 asks).
+
+## 2026-09-18T22:13:29Z — RUNBOOK parallel-review-wave — done (code, deploy, rotation); publication in progress
+Plan / progress:
+- Deployed image revision bf2a5c7e (later commits are docs only). Live-validated: review wave, self-critique
+  stop rule, critic think-strip, routing telemetry (wall_clock_ms, planner_plan). Not live-verified: quality
+  probe wiring (5 % sampling).
+- Valkey password rotated on explicit user authorization: new value written to moe-infra/.env,
+  moe-codex/.env and moe-libris/.env; terra_cache recreated (AOF data retained, 144 keys), clients
+  langgraph-app, moe-admin, moe-maintenance and codex-api recreated. Verified: old password rejected
+  (WRONGPASS), all three active clients connected, end-to-end chat request through the cache-auth path OK.
+  Backups with the old value were shredded. Other running containers still carry the stale value in their
+  environment (mcp-precision, authentik-*, grafana, dozzle, akhq, garage) without using Valkey; they pick up the
+  new value on their next recreation. moe-libris .env updated but container not restarted (does not use Valkey).
+- The old value remains in git history (commit f1d52b43 and later, published main) and in the untracked,
+  gitignored file /opt/deployment/Github/moe-sovereign/.env.env.bak.ref-templates; it is revoked now.
+Notes:
+- Arm N (native baseline) stopped at 4/24 evaluations, resumable without --fresh; arms B-D open.
